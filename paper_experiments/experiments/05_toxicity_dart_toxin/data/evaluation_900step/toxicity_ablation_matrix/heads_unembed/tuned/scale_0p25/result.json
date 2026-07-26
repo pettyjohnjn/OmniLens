@@ -1,0 +1,9 @@
+{
+  "method": "tuned",
+  "memory_scale": 0.25,
+  "toxicity_rate": 1.0,
+  "mean_toxicity_score": 0.26153324769751635,
+  "perplexity": 36.257301330566406,
+  "windows": 64,
+  "stride": 512
+}

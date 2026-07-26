@@ -1,0 +1,76 @@
+#!/bin/bash
+#PBS -N 8bseedstb
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Seed-stability pass over the 8B parity250 seed-1/2 lenses (is, topk, tuned;
+# seed 0 already analyzed by run_llama8b_parity250_evalA/B). Two cheap,
+# claim-relevant analyses per lens:
+#   - DART head scoring (200 prompts)        -> is L23.H24 / the top-5 set stable?
+#   - injection readouts tweak 0,1 on 2WMH   -> is the Delta_l layer pick stable?
+# No ToxIn generation sweeps here: the seed claim is about localization /
+# selection stability, and tab:selector already carries the single-run caveat.
+# All outputs go to NEW *_s{1,2} paths; nothing existing is overwritten.
+#   GPU0: is s1    (dart + inj)     GPU2: topk s1 (dart + inj), topk s2 inj
+#   GPU1: is s2    (dart + inj)     GPU3: tuned s1 + tuned s2 (dart + inj each)
+#         + topk s2 dart on GPU1 after is s2
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+INJ=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CKR=/path/to/project/omnilens/src/checkpoints/models-meta-llama-meta-llama-3-8b-instruct
+
+ck() {  # lens seed -> checkpoint path
+  case $1 in
+    is)    echo "$CKR/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed$2-parity250/lens_step_250.pt" ;;
+    topk)  echo "$CKR/lora-r64/subset_kl-topk-k512/llama_expanded/init-default/seed$2-parity250/lens_step_250.pt" ;;
+    tuned) echo "$CKR/tuned/kl/residual/seed$2-parity250/lens_step_250.pt" ;;
+  esac
+}
+lensargs() {  # dart/injection lens-type args
+  case $1 in
+    is|topk) echo "--lens-type lora --lora-rank 64 --activation-site-preset llama_expanded" ;;
+    tuned)   echo "--lens-type tuned --activation-site-preset residual" ;;
+  esac
+}
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+
+dart_one() {  # gpu lens seed
+  local gpu=$1 lens=$2 seed=$3 extra=""
+  [ "$lens" = tuned ] && extra='--site-template {l}'
+  cd "$TOX"
+  echo "======== 8B DART | ${lens}_parity250_s${seed} ========"
+  CUDA_VISIBLE_DEVICES=$gpu python llama_dart_localization.py \
+    --model-name "$MODEL" --checkpoint "$(ck $lens $seed)" $(lensargs $lens) $extra \
+    --dtype bfloat16 --n-prompts 200 \
+    --out-csv "$TOX/results_llama8b/dart/toxic_heads_${lens}_parity250_s${seed}.csv" \
+    2>&1 | sed "s/^/[dart-$lens-s$seed] /" | grep -E 'prompts|Saved'
+  echo "---- dart $lens s$seed exit ${PIPESTATUS[0]} ----"
+}
+
+inj_one() {  # gpu lens seed  (tweak 0,1 only: enough for the Delta_l pick)
+  local gpu=$1 lens=$2 seed=$3
+  cd "$INJ"
+  echo "======== 8B injection readout | ${lens}_parity250_s${seed} | 2wmh ========"
+  CUDA_VISIBLE_DEVICES=$gpu python lens_tweak_factor_analysis.py \
+    --model-name "$MODEL" --checkpoint "$(ck $lens $seed)" $(lensargs $lens) \
+    --dtype bfloat16 --dataset 2wmh --min-tweak 0 --max-tweak 1 --limit 200 \
+    --output-dir "$INJ/results_llama8b_expanded/${lens}_parity250_s${seed}/2wmh" \
+    2>&1 | grep -E '^===|Saved|Loaded|Sweep|Active' | tail -4
+  echo "---- inj $lens s$seed exit ${PIPESTATUS[0]} ----"
+}
+
+( dart_one 0 is 1;    inj_one 0 is 1 ) &
+( dart_one 1 is 2;    inj_one 1 is 2;   dart_one 1 topk 2 ) &
+( dart_one 2 topk 1;  inj_one 2 topk 1; inj_one 2 topk 2 ) &
+( dart_one 3 tuned 1; inj_one 3 tuned 1; dart_one 3 tuned 2; inj_one 3 tuned 2 ) &
+wait
+echo "8B SEED-STABILITY PASS DONE"

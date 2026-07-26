@@ -1,0 +1,9 @@
+{
+  "method": "unembed",
+  "memory_scale": 0.25,
+  "toxicity_rate": 1.0,
+  "mean_toxicity_score": 0.0027029910625424236,
+  "perplexity": 53936.67578125,
+  "windows": 64,
+  "stride": 512
+}

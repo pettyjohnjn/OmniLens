@@ -1,0 +1,35 @@
+/path/to/conda/envs/omnilens/lib/python3.10/runpy.py:126: RuntimeWarning: 'omnilens.cli.main' found in sys.modules after import of package 'omnilens.cli', but prior to execution of 'omnilens.cli.main'; this may result in unpredictable behaviour
+  warn(RuntimeWarning(msg))
+[INFO] Config: TrainConfig(model_name='meta-llama/Meta-Llama-3-8B-Instruct', model_revision=None, tokenizer_name=None, data_source='pile', text_paths=[], text_mode='lines', text_json_field='text', pile_split='train', max_seq_len=1024, stride=1024, drop_remainder=True, document_separated=True, max_docs=None, lens_type='lora', lora_rank=64, lora_alpha=64.0, lora_init='default_lora', lora_init_calibration_tokens=50000, lora_init_ridge_lambda=0.001, lora_init_ridge_lambda_scale='trace_xxt_over_d', lora_init_stats_dtype='float32', lora_init_jitter=1e-06, lora_init_svd_metric='residual', lora_init_normalization='none', activation_site_preset='llama_expanded', loss_type='subset_kl', kl_chunk_size=128, subset_kl_k=512, subset_kl_mode='topk', subset_kl_k_tail=0, subset_kl_tail_proposal='target', subset_kl_tail_proposal_alpha=0.8, subset_kl_tail_proposal_tau=0.7, shared_subset_top_m=16, shared_subset_max_K=512, token_shift=0, per_gpu_batch_size=2, num_steps=3, lr=0.001, weight_decay=0.0, warmup_steps=0, lr_schedule='constant', min_lr_ratio=0.0, grad_clip_norm=1.0, tokens_per_step=2048, max_microsteps=512, amp_enabled=True, amp_dtype='bf16', ddp_enabled=True, ddp_backend='nccl', model_parallel=False, model_dtype='bf16', model_gpu_ids=None, per_gpu_max_memory=None, cpu_offload_gb=0, attn_implementation=None, multinode_model_parallel=False, fsdp_offload_to_cpu=False, log_every=1, log_memory=True, save_every=1000, save_initial_checkpoint=False, output_dir=PosixPath('/path/to/project/omnilens/benchmarks/readout_scaling_8b/topk_s1024'), resume_checkpoint=None, seed=0, run_tag=None)
+[INFO] DDP: DDPState(enabled=False, rank=0, world_size=1, device=cuda)
+[INFO] Loading model: meta-llama/Meta-Llama-3-8B-Instruct
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]
+Loading weights:   8%|▊         | 22/291 [00:00<00:01, 164.61it/s]
+Loading weights:  13%|█▎        | 39/291 [00:00<00:01, 148.85it/s]
+Loading weights:  19%|█▊        | 54/291 [00:00<00:01, 125.03it/s]
+Loading weights:  24%|██▎       | 69/291 [00:00<00:01, 112.79it/s]
+Loading weights:  28%|██▊       | 81/291 [00:00<00:02, 93.22it/s] 
+Loading weights:  33%|███▎      | 95/291 [00:00<00:02, 96.82it/s]
+Loading weights:  38%|███▊      | 111/291 [00:01<00:01, 104.80it/s]
+Loading weights:  42%|████▏     | 122/291 [00:01<00:02, 70.34it/s] 
+Loading weights:  47%|████▋     | 138/291 [00:01<00:01, 79.71it/s]
+Loading weights:  54%|█████▍    | 157/291 [00:01<00:01, 100.95it/s]
+Loading weights:  58%|█████▊    | 170/291 [00:01<00:01, 89.89it/s] 
+Loading weights:  65%|██████▌   | 190/291 [00:01<00:00, 111.41it/s]
+Loading weights:  70%|███████   | 204/291 [00:02<00:00, 97.91it/s] 
+Loading weights:  74%|███████▍  | 216/291 [00:02<00:00, 85.23it/s]
+Loading weights:  78%|███████▊  | 226/291 [00:02<00:00, 73.08it/s]
+Loading weights:  84%|████████▍ | 245/291 [00:02<00:00, 92.66it/s]
+Loading weights:  88%|████████▊ | 256/291 [00:02<00:00, 85.76it/s]
+Loading weights:  92%|█████████▏| 267/291 [00:02<00:00, 85.99it/s]
+Loading weights:  95%|█████████▌| 277/291 [00:03<00:00, 74.50it/s]
+Loading weights: 100%|██████████| 291/291 [00:03<00:00, 94.36it/s]
+[INFO] Lens: LowRankLens(vocab_size=128256, r=64, layers=194, params=102,506,496/627,847,168)
+[INFO] Loss: SubsetKLLoss(k=512, mode='topk', reduction='mean')
+[INFO] Activation sites: preset=llama_expanded count=194
+[INFO] step 1/3 | loss=5.5260 | tok/s=125 | dt=16415ms | micro=1 | lr=1.00e-03 | mem=22.4GB
+[INFO] step 2/3 | loss=5.5024 | tok/s=136 | dt=15066ms | micro=1 | lr=1.00e-03 | mem=22.9GB
+[INFO] step 3/3 | loss=6.3723 | tok/s=136 | dt=15044ms | micro=1 | lr=1.00e-03 | mem=22.9GB
+[INFO] Saved checkpoint to /path/to/project/omnilens/benchmarks/readout_scaling_8b/topk_s1024/lens_step_3.pt

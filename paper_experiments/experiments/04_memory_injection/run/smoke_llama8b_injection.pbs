@@ -1,0 +1,33 @@
+#!/bin/bash
+#PBS -N inj8b_smoke
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=00:30:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+EXP=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CKPT_MC=/path/to/project/omnilens/src/checkpoints/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0/lens_step_1000.pt
+OUT=$EXP/results_llama8b_smoke
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0   # injection only needs 1 GPU (8B bf16 ~16 GB)
+cd "$EXP"
+
+echo "=== SMOKE: LLaMA-3-8B injection, head+IS r64 lens, hand, 8 examples, tweaks 1-3 ==="
+python lens_tweak_factor_analysis.py \
+  --model-name "$MODEL" \
+  --checkpoint "$CKPT_MC" \
+  --lens-type lora --lora-rank 64 \
+  --activation-site-preset llama_expanded \
+  --dtype bfloat16 \
+  --dataset hand \
+  --limit 8 --max-tweak 3 \
+  --output-dir "$OUT/is_r64/hand" 2>&1
+rc=$?
+echo "=== exit code: $rc ==="
+if [ $rc -eq 0 ]; then echo "SMOKE PASSED"; head -2 "$OUT/is_r64/hand/tweak_2.csv" 2>/dev/null; fi

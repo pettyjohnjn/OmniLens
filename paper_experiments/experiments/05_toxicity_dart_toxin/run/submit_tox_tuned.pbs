@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -N tox_tuned
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -j oe
+#PBS -o /path/to/project/interp/_jobs/tox_tuned.log
+
+# Fills the TUNED ablation-direction column of the matrix (separate job in the
+# original pipeline). Uses the freshly-discovered toxic_heads_*.csv in the
+# 900-step eval root. (Tuned lens checkpoint is unchanged; only the lora-selector
+# row's heads differ from the original.)
+set -uo pipefail
+REPO=/path/to/project/interp
+OMNILENS=/path/to/project/omnilens/src
+SUBSETKL=/path/to/project/packages/subset-kl/src
+EVAL=${EVAL:-/path/to/project/evaluation_900step}
+HEADS_DIR=$EVAL/toxicity_heads_per_method
+OUT_DIR=$EVAL/toxicity_ablation_matrix
+S=$REPO/experiments/toxicity_ablation
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:$OMNILENS:$SUBSETKL:${PYTHONPATH:-}
+export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+echo "[$(date)] tuned column → $OUT_DIR"
+SCALES="0.05 0.10 0.17 0.25 0.35 0.50"
+run_tuned() {
+  CUDA_VISIBLE_DEVICES=$1 python $S/toxicity_ablation.py \
+      --out_dir         $OUT_DIR/heads_$2 \
+      --toxic_heads_csv $HEADS_DIR/toxic_heads_$2.csv \
+      --methods         tuned \
+      --memory_scales   $SCALES \
+      --n_toxic_prompts 100 --max_new_tokens 20 \
+      --perplexity_windows 64 --perplexity_stride 512 --device cuda
+}
+run_tuned 0 unembed     &
+run_tuned 1 lora        &
+wait
+echo "[$(date)] tuned column complete"

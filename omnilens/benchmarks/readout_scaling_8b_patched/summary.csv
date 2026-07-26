@@ -1,0 +1,13 @@
+loss,seq_len,status,peak_gb,tok_per_sec
+fullkl,1024,OK,24.3910,342.9341
+fullkl,2048,OK,31.8792,344.2767
+fullkl,4096,OOM,,
+fullkl,8192,OOM,,
+is,1024,OK,22.2410,278.1736
+is,2048,OK,27.1848,280.6116
+is,4096,OOM,37.0645,279.4674
+is,8192,OOM,,
+topk,1024,OK,22.3261,135.6332
+topk,2048,OK,25.6525,135.9677
+topk,4096,OK,32.3054,135.1660
+topk,8192,OOM,,

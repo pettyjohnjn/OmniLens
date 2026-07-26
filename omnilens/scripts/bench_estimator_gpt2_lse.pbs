@@ -1,0 +1,98 @@
+#!/bin/bash
+#PBS -N bench_est_lse
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Measure Peak GB + Tok/s for the GPT-2 estimator tables. In this build the
+# trainer frees teacher_logits_full once subset_chunks is built, and
+# _prepare_k2_teacher_subset uses a single in-place fp32 buffer.
+# Same trainer config as the production runs (gpt2_seed_worker.sh): residual
+# hookset, r=64, 32x1024 microbatch, bf16 AMP. 12 steps per config: memory
+# stabilizes within a few iters; Tok/s is the median over steps 4-12.
+# KL columns are untouched (they come from the 1,000-step training runs).
+
+set -o pipefail
+REPO=/path/to/project/omnilens
+BENCH=$REPO/benchmarks/estimator_gpt2_lse_seq
+mkdir -p $BENCH
+
+module use /path/to/modulefiles
+module load conda
+conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:$PYTHONPATH
+export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS=8
+
+# DDP-4 to match the published Tok/s protocol (production GPT-2 ran
+# torch.distributed.run --nproc_per_node=4; table Tok/s are 4-GPU aggregate).
+# Per-rank batch 32 -> effective 262,144 tokens/step in 2 microsteps.
+run_cfg () {  # $1 gpu(ignored)  $2 tag  $3 lossargs...
+    local GPU=$1 TAG=$2; shift 2
+    local OUT=$BENCH/$TAG
+    mkdir -p $OUT
+    echo "[cfg] ddp4 $TAG"
+    python -m torch.distributed.run --standalone --nnodes=1 \
+        --nproc_per_node=4 -m omnilens.cli.main train \
+        --model_name gpt2 --data_source pile \
+        --lens_type lora --lora_rank 64 --lora_init default_lora \
+        --activation_site_preset residual \
+        --max_seq_len 1024 --batch_size 32 --tokens_per_step 262144 \
+        --num_steps 12 --warmup_steps 0 --lr 1e-3 \
+        --amp --amp_dtype bf16 --seed 0 \
+        --save_every 1000 --log_every 1 \
+        "$@" \
+        --output_dir $OUT > $OUT/run.log 2>&1
+    echo "$?" > $OUT/RC
+    echo "[cfg] $TAG done rc=$(cat $OUT/RC)"
+}
+
+SUB="--loss_type subset_kl --subset_kl_mode"
+
+# sequential on GPU 0: Tok/s needs an uncontended node
+run_cfg 0 fullkl        --loss_type kl --kl_chunk_size 128
+run_cfg 0 topk256       $SUB topk --subset_kl_k 256
+run_cfg 0 topk512       $SUB topk --subset_kl_k 512
+run_cfg 0 topk768       $SUB topk --subset_kl_k 768
+run_cfg 0 topk1024      $SUB topk --subset_kl_k 1024
+run_cfg 0 is256_256     $SUB is --subset_kl_k 256  --subset_kl_k_tail 256
+run_cfg 0 is512_512     $SUB is --subset_kl_k 512  --subset_kl_k_tail 512
+run_cfg 0 is512_1024    $SUB is --subset_kl_k 512  --subset_kl_k_tail 1024
+run_cfg 0 is768_768     $SUB is --subset_kl_k 768  --subset_kl_k_tail 768
+run_cfg 0 is1024_512    $SUB is --subset_kl_k 1024 --subset_kl_k_tail 512
+run_cfg 0 is1024_1024   $SUB is --subset_kl_k 1024 --subset_kl_k_tail 1024
+run_cfg 0 rs0_512       $SUB is --subset_kl_k 0    --subset_kl_k_tail 512
+run_cfg 0 rs0_1024      $SUB is --subset_kl_k 0    --subset_kl_k_tail 1024
+run_cfg 0 rs0_1536      $SUB is --subset_kl_k 0    --subset_kl_k_tail 1536
+
+python - <<'EOF'
+import csv, pathlib, statistics
+bench = pathlib.Path("/path/to/project/omnilens/benchmarks/estimator_gpt2_lse_seq")
+rows = []
+for d in sorted(bench.iterdir()):
+    if not d.is_dir():
+        continue
+    rc = (d / "RC").read_text().strip() if (d / "RC").exists() else "?"
+    peak = toks = ""
+    m = d / "metrics.csv"
+    if m.exists():
+        recs = list(csv.DictReader(m.open()))
+        if recs:
+            peaks = [float(r["peak_memory_gb"]) for r in recs if r.get("peak_memory_gb")]
+            tps = [float(r["tok_per_sec"]) for r in recs[3:] if r.get("tok_per_sec")]
+            peak = f"{max(peaks):.2f}" if peaks else ""
+            toks = f"{statistics.median(tps):.0f}" if tps else ""
+    rows.append({"config": d.name, "rc": rc, "peak_gb": peak, "tok_per_sec_median": toks})
+out = bench / "summary.csv"
+with out.open("w", newline="") as fh:
+    w = csv.DictWriter(fh, fieldnames=["config", "rc", "peak_gb", "tok_per_sec_median"])
+    w.writeheader(); w.writerows(rows)
+print(f"wrote {out}")
+for r in rows:
+    print(r)
+EOF
+echo "bench_estimator_gpt2 complete"

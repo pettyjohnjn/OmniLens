@@ -1,0 +1,44 @@
+#!/bin/bash
+#PBS -N gpt2_cpred
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+EXP=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+CK=/path/to/project/omnilens/src/checkpoints
+IS=$CK/gpt2/lora-r64/subset_kl-is-k512-tail1024/gpt2_expanded/init-default/seed0/lens_step_900.pt
+TOPK=$CK/gpt2/lora-r64/subset_kl-topk-k512/gpt2_expanded/init-default/seed0/lens_step_500.pt
+TUNED=$CK/gpt2/tuned/kl/gpt2_expanded/seed0/lens_step_500.pt
+OUT=$EXP/results_gpt2_expanded
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0
+cd "$EXP"
+
+# $1=tag $2=ckpt $3=lens_type $4=dataset $5=extra_flags
+run() {
+  echo "======== GPT-2 expanded | lens=$1 | ds=$4 | $5 ========"
+  python lens_tweak_factor_analysis.py \
+    --model-name gpt2 --checkpoint "$2" \
+    --lens-type "$3" --lora-rank 64 \
+    --activation-site-preset gpt2_expanded --dtype float32 \
+    --dataset "$4" --min-tweak 0 --max-tweak 10 --limit 300 \
+    --output-dir "$OUT/$1/$4" $5 2>&1 | grep -E '^===|causal|Saved|Loaded|Active|Sweep|best causal'
+  echo "---- exit ${PIPESTATUS[0]} ----"
+}
+
+# head+IS run also computes the (lens-independent) causal profile once per dataset
+run is_r64   "$IS"    lora  2wmh "--causal --causal-batch 16"
+run topk_r64 "$TOPK"  lora  2wmh ""
+run tuned    "$TUNED" tuned 2wmh ""
+
+run is_r64   "$IS"    lora  hand "--causal --causal-batch 16"
+run topk_r64 "$TOPK"  lora  hand ""
+run tuned    "$TUNED" tuned hand ""
+echo "GPT-2 CAUSAL+LENSPRED DONE"

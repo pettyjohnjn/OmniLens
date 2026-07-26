@@ -1,0 +1,61 @@
+#!/bin/bash
+#PBS -N tblprobe
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -l select=1:system=YOUR_PBS_SYSTEM:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -j oe
+#PBS -o /path/to/project/omnilens/logs/
+
+# Measure the Tok/s and Peak-GB cells of Table 2 with the released trainer,
+# so every throughput/memory number in that table is reproducible with this
+# code. Same context as the anchor probe: one node per run, torchrun DDP x4,
+# identical batch recipe, 50 steps.
+# (probe_rs_throughput.pbs already measured is512_anchor + rs512/1024/1536.)
+
+set -uo pipefail
+REPO=/path/to/project/omnilens
+PROBE=$REPO/src/checkpoints/probe_rs_ddp_throughput
+
+module use /path/to/modulefiles
+module load conda
+conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:${PYTHONPATH:-}
+export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS=8
+
+cd $REPO
+mkdir -p logs "$PROBE"
+
+COMMON="--model_name gpt2 --data_source pile --activation_site_preset residual \
+ --max_seq_len 1024 --batch_size 32 --tokens_per_step 262144 --num_steps 50 \
+ --warmup_steps 0 --lr 1e-3 --amp --amp_dtype bf16 --save_every 1000 --log_every 10 \
+ --seed 0 --base_output_dir $PROBE"
+LORA="--lens_type lora --lora_rank 64 --lora_init default_lora"
+
+probe() {  # name loss-args...
+  local name=$1; shift
+  echo "======== probe $name ========"
+  torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    -m omnilens.cli.main train $COMMON $LORA "$@" \
+    > "$REPO/logs/probe_rs_${name}.log" 2>&1
+  echo "probe $name rc=$?"
+  grep -o "tok/s=[0-9]*" "$REPO/logs/probe_rs_${name}.log" | tail -2
+  grep -o "mem=[0-9.]*GB" "$REPO/logs/probe_rs_${name}.log" | sort -u | tail -1
+}
+
+probe fullkl      --loss_type kl --kl_chunk_size 128
+probe topk256     --loss_type subset_kl --subset_kl_mode topk --subset_kl_k 256
+probe topk512     --loss_type subset_kl --subset_kl_mode topk --subset_kl_k 512
+probe topk768     --loss_type subset_kl --subset_kl_mode topk --subset_kl_k 768
+probe topk1024    --loss_type subset_kl --subset_kl_mode topk --subset_kl_k 1024
+probe mc256x256   --loss_type subset_kl --subset_kl_mode is --subset_kl_k 256  --subset_kl_k_tail 256
+probe mc512x1024  --loss_type subset_kl --subset_kl_mode is --subset_kl_k 512  --subset_kl_k_tail 1024
+probe mc768x768   --loss_type subset_kl --subset_kl_mode is --subset_kl_k 768  --subset_kl_k_tail 768
+probe mc1024x512  --loss_type subset_kl --subset_kl_mode is --subset_kl_k 1024 --subset_kl_k_tail 512
+probe mc1024x1024 --loss_type subset_kl --subset_kl_mode is --subset_kl_k 1024 --subset_kl_k_tail 1024
+
+echo "TABLE2 THROUGHPUT PROBE DONE"

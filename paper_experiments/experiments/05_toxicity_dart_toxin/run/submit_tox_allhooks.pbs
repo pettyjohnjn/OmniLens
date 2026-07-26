@@ -1,0 +1,58 @@
+#!/bin/bash
+#PBS -N tox_allhooks
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -j oe
+#PBS -o /path/to/project/interp/_jobs/tox_allhooks.log
+
+# Toxicity ALLHOOKS study with the 900-step low-rank lens.
+# Phase 1: site discovery (4 methods ‖).  Phase 2: whole-site ablation per site type
+# (lora-selected sites, lora_r64 direction), 6 site types across the GPUs.
+set -uo pipefail
+REPO=/path/to/project/interp
+OMNILENS=/path/to/project/omnilens/src
+SUBSETKL=/path/to/project/packages/subset-kl/src
+EVAL=${EVAL:-/path/to/project/evaluation_900step}
+SITES_DIR=$EVAL/toxicity_sites_allhooks
+ABL_DIR=$EVAL/toxicity_allhooks_ablation
+S=$REPO/experiments/toxicity_ablation
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:$OMNILENS:$SUBSETKL:${PYTHONPATH:-}
+export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+mkdir -p $SITES_DIR $ABL_DIR
+echo "[$(date)] node=$(hostname) EVAL=$EVAL"
+python -c "from interp import config; print('  low-rank lens:', config.CKPT_LORA_R64)"
+
+echo "[$(date)] Phase 1: site discovery (all 6 hook types, 4 methods ‖)"
+for gm in 0:unembed 1:lora 2:tuned; do
+  g=${gm%%:*}; m=${gm##*:}
+  CUDA_VISIBLE_DEVICES=$g python $S/find_toxic_sites_per_method.py \
+      --methods $m --out_dir $SITES_DIR --n_prompts 200 --device cuda &
+done
+wait
+echo "[$(date)] site discovery done"; ls -lh $SITES_DIR/
+
+echo "[$(date)] Phase 2: whole-site ablation (lora sites, lora_r64 direction)"
+SCALES="0.05 0.10 0.17 0.25 0.35 0.50"
+SITES=$SITES_DIR/toxic_sites_lora.csv
+ablate() {  # gpu site_type
+  CUDA_VISIBLE_DEVICES=$1 python $S/run_hookset_ablation.py \
+      --out_dir          $ABL_DIR/$2 \
+      --toxic_sites_csv  $SITES \
+      --site_type_filter $2 \
+      --methods          lora_r64 \
+      --memory_scales    $SCALES \
+      --n_toxic_prompts  100 --max_new_tokens 20 \
+      --perplexity_windows 64 --perplexity_stride 512 --device cuda
+}
+( ablate 0 attn_in;  ablate 0 attn_out ) &
+( ablate 1 resid_mid; ablate 1 mlp_in ) &
+( ablate 2 mlp_out;  ablate 2 resid_post ) &
+wait
+echo "[$(date)] allhooks complete → $ABL_DIR"

@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -N toxin8b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache   # complete toxic-bert + wikitext + wiki_toxic
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0
+cd "$TOX"
+
+echo "======== 8B ToxIn ablation (DART-selected heads, unembed direction) ========"
+python llama_toxin_ablation.py \
+  --model-name "$MODEL" \
+  --dart-csv "$TOX/results_llama8b/dart/toxic_heads_is_r64.csv" \
+  --dtype bfloat16 --n-top 15 --n-prompts 100 --max-new-tokens 20 \
+  --ppl-windows 32 --lambdas 0.0 0.05 0.1 0.2 0.3 \
+  --out-csv "$TOX/results_llama8b/toxin/ablation_summary.csv" 2>&1
+echo "---- exit ${PIPESTATUS[0]} ----"

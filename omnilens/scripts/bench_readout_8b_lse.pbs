@@ -1,0 +1,113 @@
+#!/bin/bash
+#PBS -N bench_ro8lseb_v2
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Tier-1 measurement for the paper's memory/feasibility claim:
+# per-GPU peak memory + throughput for {full-KL, top-k, Top-k+IS} on the 8B
+# expanded hookset at FIXED microbatch (batch_size 2) across sequence lengths
+# {1024, 2048, 4096, 8192}. Single GPU per config (teacher + lens + readout on
+# one A100-40GB), 3 optimizer steps each, 1 microstep per step
+# (tokens_per_step = 2*seq_len). OOM is a *result*, recorded as such.
+# Outputs: $BENCH/<loss>_s<seqlen>/metrics.csv + summary.csv (never overwrites
+# training checkpoints; everything lands under benchmarks/).
+
+set -o pipefail
+REPO=/path/to/project/omnilens
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+BENCH=$REPO/benchmarks/readout_scaling_8b_lse
+mkdir -p $BENCH
+
+module use /path/to/modulefiles
+module load conda
+conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:$PYTHONPATH
+export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS=8
+
+run_cfg () {  # $1 gpu  $2 loss-tag  $3 seqlen
+    local GPU=$1 TAG=$2 S=$3
+    local OUT=$BENCH/${TAG}_s${S}
+    mkdir -p $OUT
+    local LOSSARGS=""
+    case $TAG in
+      fullkl) LOSSARGS="--loss_type kl --kl_chunk_size 4096" ;;
+      topk)   LOSSARGS="--loss_type subset_kl --subset_kl_mode topk --subset_kl_k 512 --subset_kl_k_tail 0" ;;
+      is)     LOSSARGS="--loss_type subset_kl --subset_kl_mode is --subset_kl_k 512 --subset_kl_k_tail 1024" ;;
+    esac
+    echo "[cfg] gpu=$GPU $TAG seq=$S -> $OUT"
+    CUDA_VISIBLE_DEVICES=$GPU python -m omnilens.cli.main train \
+        --model_name $MODEL --model_dtype bf16 \
+        --lens_type lora --lora_rank 64 --lora_init default_lora \
+        $LOSSARGS \
+        --activation_site_preset llama_expanded \
+        --data_source pile --max_seq_len $S --batch_size 2 \
+        --tokens_per_step $((2 * S)) \
+        --num_steps 3 --warmup_steps 0 --lr 1e-3 \
+        --amp --amp_dtype bf16 --seed 0 \
+        --save_every 1000 --log_every 1 \
+        --output_dir $OUT > $OUT/run.log 2>&1
+    local RC=$?
+    if [ $RC -ne 0 ]; then
+        if grep -qi "out of memory\|OOM" $OUT/run.log; then
+            echo "OOM" > $OUT/STATUS
+        else
+            echo "FAIL($RC)" > $OUT/STATUS
+        fi
+    else
+        echo "OK" > $OUT/STATUS
+    fi
+    echo "[cfg] gpu=$GPU $TAG seq=$S done: $(cat $OUT/STATUS)"
+}
+
+# 12 configs over 4 GPUs, 3 rounds; each round runs 4 configs in parallel.
+ROUND1=(fullkl:1024 topk:1024 is:1024 fullkl:2048)
+ROUND2=(topk:2048 is:2048 fullkl:4096 topk:4096)
+ROUND3=(is:4096 fullkl:8192 topk:8192 is:8192)
+for ROUND in ROUND1 ROUND2 ROUND3; do
+    declare -n CFGS=$ROUND
+    GPU=0
+    for C in "${CFGS[@]}"; do
+        TAG=${C%%:*}; S=${C##*:}
+        run_cfg $GPU $TAG $S &
+        GPU=$((GPU + 1))
+    done
+    wait
+done
+
+# ── summarize ────────────────────────────────────────────────────────────────
+python - <<'EOF'
+import csv, pathlib
+bench = pathlib.Path("/path/to/project/omnilens/benchmarks/readout_scaling_8b_lse")
+rows = []
+for d in sorted(bench.iterdir()):
+    if not d.is_dir():
+        continue
+    tag, s = d.name.rsplit("_s", 1)
+    status = (d / "STATUS").read_text().strip() if (d / "STATUS").exists() else "MISSING"
+    peak = toks = ""
+    m = d / "metrics.csv"
+    if m.exists():
+        lines = [l.strip().split(",") for l in m.read_text().splitlines() if l.strip()]
+        if len(lines) > 1:
+            hdr, last = lines[0], lines[-1]
+            row = dict(zip(hdr, last))
+            peak = row.get("peak_memory_gb", "")
+            toks = row.get("tok_per_sec", "")
+    rows.append({"loss": tag, "seq_len": int(s), "status": status,
+                 "peak_gb": peak, "tok_per_sec": toks})
+rows.sort(key=lambda r: (r["loss"], r["seq_len"]))
+out = bench / "summary.csv"
+with out.open("w", newline="") as fh:
+    w = csv.DictWriter(fh, fieldnames=["loss", "seq_len", "status", "peak_gb", "tok_per_sec"])
+    w.writeheader(); w.writerows(rows)
+print(f"wrote {out}")
+for r in rows:
+    print(r)
+EOF
+echo "bench_readout_8b complete"

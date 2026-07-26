@@ -1,0 +1,75 @@
+#!/bin/bash
+#PBS -N par250evA
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# 8B downstream evaluation, phase A, on the parity250 checkpoints (all three
+# lenses share one 250-step cosine-annealed schedule identical to 70B's).
+# Runs together with phase B (run_llama8b_parity250_evalB.pbs):
+#   - DART localization per lens  -> sharpness comparison + cross-lens
+#   - ToxIn on each lens's top-15 heads -> selector parity rows
+#   - tuned injection sweeps      -> full-rank reference column
+# All outputs go to *_parity250 paths; nothing existing is overwritten.
+#   GPU0: DART head+IS parity -> ToxIn @ head+IS parity heads
+#   GPU1: DART topk-parity   -> ToxIn @ topk-parity heads
+#   GPU2: DART tuned-parity  -> ToxIn @ tuned-parity heads
+#   GPU3: injection sweeps tuned-parity (2wmh, hand)
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+INJ=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CKR=/path/to/project/omnilens/src/checkpoints/models-meta-llama-meta-llama-3-8b-instruct
+IS=$CKR/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0-parity250/lens_step_250.pt
+TOPK=$CKR/lora-r64/subset_kl-topk-k512/llama_expanded/init-default/seed0-parity250/lens_step_250.pt
+TUNED=$CKR/tuned/kl/residual/seed0-parity250/lens_step_250.pt
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+
+dart_then_toxin() {  # $1=gpu $2=tag $3=checkpoint $4...=extra dart args
+  local gpu=$1 tag=$2 ck=$3; shift 3
+  cd "$TOX"
+  echo "======== 8B DART | $tag ========"
+  CUDA_VISIBLE_DEVICES=$gpu python llama_dart_localization.py \
+    --model-name "$MODEL" --checkpoint "$ck" "$@" \
+    --dtype bfloat16 --n-prompts 200 \
+    --out-csv "$TOX/results_llama8b/dart/toxic_heads_${tag}.csv" \
+    2>&1 | sed "s/^/[dart-$tag] /" | grep -E 'prompts|Saved'
+  echo "---- dart $tag exit ${PIPESTATUS[0]} ----"
+  echo "======== 8B ToxIn | $tag heads ========"
+  CUDA_VISIBLE_DEVICES=$gpu python llama_toxin_ablation.py \
+    --model-name "$MODEL" \
+    --dart-csv "$TOX/results_llama8b/dart/toxic_heads_${tag}.csv" \
+    --dtype bfloat16 --n-top 15 --n-prompts 100 --max-new-tokens 20 \
+    --ppl-windows 32 --lambdas 0.0 0.05 0.1 0.2 0.3 \
+    --out-csv "$TOX/results_llama8b/toxin_${tag}/ablation_summary.csv" \
+    2>&1 | sed "s/^/[toxin-$tag] /" | grep -E 'top|tox|ppl|Saved|exit'
+  echo "---- toxin $tag exit ${PIPESTATUS[0]} ----"
+}
+
+dart_then_toxin 0 is_parity250   "$IS"   --lens-type lora --lora-rank 64 --activation-site-preset llama_expanded &
+dart_then_toxin 1 topk_parity250 "$TOPK" --lens-type lora --lora-rank 64 --activation-site-preset llama_expanded &
+dart_then_toxin 2 tuned_parity250 "$TUNED" --lens-type tuned --activation-site-preset residual --site-template "{l}" &
+
+(
+  cd "$INJ"
+  for DS in 2wmh hand; do
+    echo "======== 8B injection | tuned-parity250 | $DS ========"
+    CUDA_VISIBLE_DEVICES=3 python lens_tweak_factor_analysis.py \
+      --model-name "$MODEL" --checkpoint "$TUNED" --lens-type tuned \
+      --activation-site-preset residual --dtype bfloat16 \
+      --dataset "$DS" --min-tweak 0 --max-tweak 10 --limit 200 \
+      --output-dir "$INJ/results_llama8b_expanded/tuned_parity250/$DS" \
+      2>&1 | grep -E '^===|Saved|Loaded|Sweep|best|Active' | tail -6
+    echo "---- inj tuned $DS exit ${PIPESTATUS[0]} ----"
+  done
+) &
+
+wait
+echo "PARITY250 EVAL PHASE A DONE"

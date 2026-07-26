@@ -1,0 +1,1 @@
+step,total_tokens,loss,tok_per_sec,dt_ms,microsteps,lr,peak_memory_gb

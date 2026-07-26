@@ -1,0 +1,48 @@
+#!/bin/bash
+#PBS -N gpt2_seeds
+#PBS -l select=10:ncpus=32:ngpus=4
+#PBS -l walltime=03:00:00
+#PBS -q prod
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -r y
+
+# Multi-seed GPT-2 study (statistical replication + pure random-sampling
+# baseline a la RS-KD, Anshumann et al. ACL 2025).
+#
+# 13 independent single-GPU runs, ONE PER GPU, all in parallel across the
+# first 4 allocated nodes (remaining nodes idle by design). Runs replicate
+# the exact seed-0 recipes (batch 32x1024, 1000 steps, no warmup, lr 1e-3,
+# tokens_per_step 2^18, residual hookset):
+#   rank evidence     : tuned+full-KL and LoRA-r64+full-KL, seeds 1,2
+#   estimator variance: topk k=1024 and IS 512+512 (Total=1024), seeds 1,2
+#   RS baseline       : k_head=0 teacher sampling, tails 512/1024/1536 at
+#                       seed 0, plus seeds 1,2 at tails 512 and 1024
+#                       (multi-seed RS at both matched totals, 15 runs total)
+#
+# Idempotent: finished runs are skipped, partial runs auto-resume; resubmit
+# until all 13 targets hit step 1000.
+# All outputs land in seed{1,2} / is-k0-* dirs; nothing existing is touched.
+
+REPO=/path/to/project/omnilens
+
+NODES=($(sort -u $PBS_NODEFILE))
+echo "Allocated ${#NODES[@]} nodes; using 4 for 13 runs (one per GPU)."
+
+declare -a PLAN
+PLAN[0]="0:tuned_kl:1 1:tuned_kl:2 2:lora_kl:1 3:lora_kl:2"
+PLAN[1]="0:topk1024:1 1:topk1024:2 2:is512:1 3:is512:2"
+PLAN[2]="0:rs1024:0 1:rs1024:1 2:rs1024:2 3:rs512:0"
+PLAN[3]="0:rs1536:0 1:rs512:1 2:rs512:2"
+
+for i in "${!PLAN[@]}"; do
+  NODE=${NODES[$i]}
+  echo "node $i ($NODE): ${PLAN[$i]}"
+  if [[ "$NODE" == "$(hostname)" ]]; then
+    bash $REPO/scripts/gpt2_seed_worker.sh ${PLAN[$i]} &
+  else
+    ssh "$NODE" "bash $REPO/scripts/gpt2_seed_worker.sh ${PLAN[$i]}" &
+  fi
+done
+wait
+echo "All workers done."

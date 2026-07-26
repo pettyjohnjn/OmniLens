@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -N rank_trunc
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -j oe
+#PBS -o /path/to/project/eval_harness/logs/
+
+# GPT-2 rank-structure study: trained-rank-r vs full-rank-truncated-to-r vs
+# random-r-subspace, all against one teacher pass. Single GPU is plenty
+# (~3.4 PFLOP total, minutes on an A100); the other three sit idle.
+
+set -o pipefail
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0
+
+cd /path/to/project/interp/experiments/rank_structure
+if [ -f data/gpt2_rank_truncation.csv ]; then
+  echo "output exists; skipping"; exit 0
+fi
+python -u eval_rank_truncation.py --tokens 131072 --seq-len 1024 --corpus pile 2>&1
+echo "---- exit $? ----"

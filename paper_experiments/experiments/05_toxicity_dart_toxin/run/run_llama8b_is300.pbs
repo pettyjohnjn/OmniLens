@@ -1,0 +1,78 @@
+#!/bin/bash
+#PBS -N is300_rerun8b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Standardize 8B to head+IS@300: re-run injection site-selection, ToxIn, and the
+# whole-model audit at lens_step_300 (was 1000). Causal profiles are
+# lens-independent and reused. Baseline toxicity is model-only and reused.
+#   GPU1: ToxIn (runs throughout)   GPU0/2/3: injection -> audit
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+INJ=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CK=/path/to/project/omnilens/src/checkpoints
+MC300=$CK/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0/lens_step_300.pt
+SITES=$TOX/results_llama8b/allhooks_step300/toxic_sites_is.csv
+BASE=$TOX/results_llama8b/toxin/ablation_summary.csv   # baseline row reused (model-only)
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+
+# ---- GPU1 (background): ToxIn at head+IS@300-flagged heads ----
+(
+  cd "$TOX"
+  echo "======== 8B ToxIn | head+IS@300 ========"
+  CUDA_VISIBLE_DEVICES=1 python llama_toxin_ablation.py \
+    --model-name "$MODEL" \
+    --dart-csv "$TOX/results_llama8b/dart/toxic_heads_is_r64_step300.csv" \
+    --dtype bfloat16 --n-top 15 --n-prompts 100 --max-new-tokens 20 \
+    --ppl-windows 32 --lambdas 0.0 0.05 0.1 0.2 0.3 \
+    --out-csv "$TOX/results_llama8b/toxin_step300/ablation_summary.csv" \
+    2>&1 | sed 's/^/[toxin] /' | grep -E 'top|tox|ppl|Saved|exit'
+  echo "---- toxin exit ${PIPESTATUS[0]} ----"
+) &
+TOXPID=$!
+
+# ---- Phase 1 (GPU0): injection head+IS@300 lens sweeps (no --causal; profile reused) ----
+cd "$INJ"
+for DS in 2wmh hand; do
+  echo "======== 8B injection | head+IS@300 | $DS ========"
+  CUDA_VISIBLE_DEVICES=0 python lens_tweak_factor_analysis.py \
+    --model-name "$MODEL" --checkpoint "$MC300" --lens-type lora --lora-rank 64 \
+    --activation-site-preset llama_expanded --dtype bfloat16 \
+    --dataset "$DS" --min-tweak 0 --max-tweak 10 --limit 200 \
+    --output-dir "$INJ/results_llama8b_expanded/is_r64_step300/$DS" \
+    2>&1 | grep -E '^===|Saved|Loaded|Sweep|best' | tail -5
+  echo "---- inj $DS exit ${PIPESTATUS[0]} ----"
+done
+
+# ---- Phase 2: whole-model audit at head+IS@300 (score on GPU0, ablate fan-out) ----
+cd "$TOX"
+echo "======== 8B audit score | head+IS@300 ========"
+CUDA_VISIBLE_DEVICES=0 python llama_allsites_audit.py score \
+  --model-name "$MODEL" --checkpoint "$MC300" --sites-csv "$SITES" \
+  2>&1 | grep -E 'prompts|Saved|L[0-9]' | tail -4
+echo "---- audit score exit ${PIPESTATUS[0]} ----"
+
+ablate() {  # $1=gpu  $2..=site types
+  local gpu=$1; shift
+  CUDA_VISIBLE_DEVICES=$gpu python llama_allsites_audit.py ablate \
+    --model-name "$MODEL" --checkpoint "$MC300" --sites-csv "$SITES" \
+    --out-root "$TOX/results_llama8b/allhooks_step300" --baseline-csv "$BASE" \
+    --site-types "$@" 2>&1 | sed "s/^/[abl$gpu] /" | grep -E 'lam=|Saved'
+}
+ablate 0 attn_in mlp_in &
+ablate 2 attn_out mlp_out &
+ablate 3 resid_mid resid_post &
+wait
+echo "audit ablate done"
+
+wait $TOXPID
+echo "MC300 RERUN 8B DONE"

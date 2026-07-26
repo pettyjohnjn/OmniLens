@@ -1,0 +1,9 @@
+{
+  "method": "lora_r64",
+  "memory_scale": 0.1,
+  "toxicity_rate": 1.0,
+  "mean_toxicity_score": 0.25479897105891725,
+  "perplexity": 33.17970275878906,
+  "windows": 64,
+  "stride": 512
+}

@@ -1,0 +1,40 @@
+#!/bin/bash
+#PBS -N dart8b_matched
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Budget-matched 8B DART: score the Top-k+IS lens at steps 200 and 300 (the
+# checkpoints bracketing Top-k's 250) so its concentration can be compared to
+# Top-k@250 at matched training budget. Inference only, existing checkpoints.
+#   GPU 0: head+IS @ step 200      GPU 1: head+IS @ step 300
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CK=/path/to/project/omnilens/src/checkpoints
+MCDIR=$CK/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$TOX"
+
+score() {  # $1=gpu $2=step
+  echo "======== 8B DART | head+IS @ step $2 (GPU $1) ========"
+  CUDA_VISIBLE_DEVICES=$1 python llama_dart_localization.py \
+    --model-name "$MODEL" --lens-type lora --lora-rank 64 \
+    --checkpoint "$MCDIR/lens_step_$2.pt" \
+    --activation-site-preset llama_expanded --dtype bfloat16 --n-prompts 200 \
+    --out-csv "results_llama8b/dart/toxic_heads_is_r64_step$2.csv" \
+    2>&1 | sed "s/^/[step$2] /" | grep -E 'prompts|Saved|Top-5|L[0-9]|Loaded'
+  echo "---- step $2 exit ${PIPESTATUS[0]} ----"
+}
+
+score 0 200 &
+score 1 300 &
+wait
+echo "8B DART MATCHED-BUDGET DONE"

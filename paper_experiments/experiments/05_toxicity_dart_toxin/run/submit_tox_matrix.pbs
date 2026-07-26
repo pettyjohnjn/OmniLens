@@ -1,0 +1,55 @@
+#!/bin/bash
+#PBS -N tox_matrix
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -j oe
+#PBS -o /path/to/project/interp/_jobs/tox_matrix.log
+
+# Toxicity ablation MATRIX, run with the 900-step low-rank lens (config.CKPT_LORA_R64).
+# Step 1: head discovery (4 selectors ‖).  Step 2: 4×4 ablation matrix (4 selectors ‖).
+# Writes to its own eval root; evaluation/ is never modified.
+set -uo pipefail
+REPO=/path/to/project/interp
+OMNILENS=/path/to/project/omnilens/src
+SUBSETKL=/path/to/project/packages/subset-kl/src
+EVAL=${EVAL:-/path/to/project/evaluation_900step}
+HEADS_DIR=$EVAL/toxicity_heads_per_method
+OUT_DIR=$EVAL/toxicity_ablation_matrix
+S=$REPO/experiments/toxicity_ablation
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:$OMNILENS:$SUBSETKL:${PYTHONPATH:-}
+export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+mkdir -p $HEADS_DIR $OUT_DIR
+echo "[$(date)] node=$(hostname) EVAL=$EVAL"
+python -c "from interp import config; print('  low-rank lens:', config.CKPT_LORA_R64)"
+
+echo "[$(date)] Step 1: head discovery"
+for gm in 0:unembed 1:lora 2:tuned; do
+  g=${gm%%:*}; m=${gm##*:}
+  CUDA_VISIBLE_DEVICES=$g python $S/find_toxic_heads_per_method.py \
+      --methods $m --out_dir $HEADS_DIR --n_prompts 200 --device cuda &
+done
+wait
+echo "[$(date)] head discovery done"; ls -lh $HEADS_DIR/
+
+echo "[$(date)] Step 2: ablation matrix"
+SCALES="0.05 0.10 0.17 0.25 0.35"
+run_ablation() {
+  CUDA_VISIBLE_DEVICES=$1 python $S/toxicity_ablation.py \
+      --out_dir          $OUT_DIR/heads_$2 \
+      --toxic_heads_csv  $HEADS_DIR/toxic_heads_$2.csv \
+      --methods          unembed lora_r64 tuned \
+      --memory_scales    $SCALES \
+      --n_toxic_prompts  100 --max_new_tokens 20 \
+      --perplexity_windows 64 --perplexity_stride 512 --device cuda
+}
+run_ablation 0 unembed     &
+run_ablation 1 lora        &
+wait
+echo "[$(date)] matrix complete → $OUT_DIR"

@@ -1,0 +1,52 @@
+#!/bin/bash
+#PBS -N gpt2_is500
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=00:50:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Standardize GPT-2 to a common 500-step budget: Top-k and tuned are already at
+# 500; move Top-k+IS from 900 -> 500 (checkpoint exists, no training). Re-run
+# the GPT-2 injection lens sweeps and DART at head+IS@500.
+#   GPU0: injection (2wmh, hand)     GPU1: DART
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+INJ=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+CK=/path/to/project/omnilens/src/checkpoints
+MC500=$CK/gpt2/lora-r64/subset_kl-is-k512-tail1024/gpt2_expanded/init-default/seed0/lens_step_500.pt
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+
+# ---- GPU1: GPT-2 DART at head+IS@500 ----
+(
+  cd "$TOX"
+  echo "======== GPT-2 DART | head+IS@500 ========"
+  CUDA_VISIBLE_DEVICES=1 python llama_dart_localization.py \
+    --model-name gpt2 --lens-type lora --lora-rank 64 --checkpoint "$MC500" \
+    --activation-site-preset gpt2_expanded --dtype float32 --n-prompts 200 \
+    --out-csv "$TOX/results_gpt2/dart/toxic_heads_is_r64_step500.csv" \
+    2>&1 | sed 's/^/[dart] /' | grep -E 'prompts|Saved|L[0-9]|Loaded'
+  echo "---- dart exit ${PIPESTATUS[0]} ----"
+) &
+DARTPID=$!
+
+# ---- GPU0: GPT-2 injection lens sweeps at head+IS@500 (causal profile reused) ----
+cd "$INJ"
+for DS in 2wmh hand; do
+  echo "======== GPT-2 injection | head+IS@500 | $DS ========"
+  CUDA_VISIBLE_DEVICES=0 python lens_tweak_factor_analysis.py \
+    --model-name gpt2 --checkpoint "$MC500" --lens-type lora --lora-rank 64 \
+    --activation-site-preset gpt2_expanded --dtype float32 \
+    --dataset "$DS" --min-tweak 0 --max-tweak 10 --limit 300 \
+    --output-dir "$INJ/results_gpt2_expanded/is_r64_step500/$DS" \
+    2>&1 | grep -E '^===|Saved|Loaded|Sweep' | tail -4
+  echo "---- inj $DS exit ${PIPESTATUS[0]} ----"
+done
+
+wait $DARTPID
+echo "GPT2 MC500 RERUN DONE"

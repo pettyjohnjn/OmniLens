@@ -1,0 +1,2 @@
+step,total_tokens,loss,tok_per_sec,dt_ms,microsteps,lr,peak_memory_gb
+1,8192,9.24700356,272.6020,30051.1360,1,0.001,38.7793

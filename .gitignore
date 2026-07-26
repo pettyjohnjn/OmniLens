@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Job scheduler output
+*.pbs.e*
+*.pbs.o*
+core
+core.[0-9]*
+
+# Local run artifacts
+checkpoints/
+logs/

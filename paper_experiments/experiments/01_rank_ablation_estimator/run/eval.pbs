@@ -1,0 +1,137 @@
+#!/bin/bash
+#PBS -N eval_gpt2_mc_sweep
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -l select=1:system=YOUR_PBS_SYSTEM:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -j oe
+#PBS -o /path/to/project/eval_harness/logs/
+
+set -euo pipefail
+
+cd /path/to/project/eval_harness
+
+module use /path/to/modulefiles
+module load conda
+conda activate tuned_lens_env
+
+export HF_HOME=/path/to/hf_cache
+export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
+export HF_DATASETS_CACHE="${HF_HOME}/datasets"
+export PYTHONPATH="/path/to/project/eval_harness:/path/to/project/omnilens/src:/path/to/project/packages/subset-kl/src:${PYTHONPATH:-}"
+export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+
+SRC_ROOT="${SRC_ROOT:-/path/to/project/omnilens/src/checkpoints/gpt2_preemptable_lowrank_is_sweep_1000}"
+OUT_ROOT="${OUT_ROOT:-/path/to/project/eval_harness/evaluation/gpt2_preemptable_lowrank_is_sweep_1000}"
+EVAL_STEPS="${EVAL_STEPS:-1000}"
+EVAL_TOKENS="${EVAL_TOKENS:-131072}"
+DATA_SPLIT="${DATA_SPLIT:-test}"
+MAX_LENGTH="${MAX_LENGTH:-1024}"
+PER_GPU_BATCH_SIZE="${PER_GPU_BATCH_SIZE:-1}"
+
+JOB_TOKEN="${PBS_JOBID:-manual.$$}"
+JOB_TOKEN="${JOB_TOKEN%%.*}"
+STAGED_LENS_ROOT="${STAGED_LENS_ROOT:-/path/to/project/eval_harness/tmp/eval_gpt2_mc_sweep_${JOB_TOKEN}}"
+
+RUNS=(
+  lora_subset_is_r1_k256_tail256
+  lora_subset_is_r1_k512_tail512
+  lora_subset_is_r1_k512_tail1024
+  lora_subset_is_r1_k768_tail768
+  lora_subset_is_r1_k1024_tail512
+  lora_subset_is_r1_k1024_tail1024
+  lora_subset_is_r4_k256_tail256
+  lora_subset_is_r4_k512_tail512
+  lora_subset_is_r4_k512_tail1024
+  lora_subset_is_r4_k768_tail768
+  lora_subset_is_r4_k1024_tail512
+  lora_subset_is_r4_k1024_tail1024
+  lora_subset_is_r8_k256_tail256
+  lora_subset_is_r8_k512_tail512
+  lora_subset_is_r8_k512_tail1024
+  lora_subset_is_r8_k768_tail768
+  lora_subset_is_r8_k1024_tail512
+  lora_subset_is_r8_k1024_tail1024
+  lora_subset_is_r16_k256_tail256
+  lora_subset_is_r16_k512_tail512
+  lora_subset_is_r16_k512_tail1024
+  lora_subset_is_r16_k768_tail768
+  lora_subset_is_r16_k1024_tail512
+  lora_subset_is_r16_k1024_tail1024
+  lora_subset_is_r32_k256_tail256
+  lora_subset_is_r32_k512_tail512
+  lora_subset_is_r32_k512_tail1024
+  lora_subset_is_r32_k768_tail768
+  lora_subset_is_r32_k1024_tail512
+  lora_subset_is_r32_k1024_tail1024
+)
+
+latest_checkpoint_path() {
+  local run_dir="$1"
+  find -L "${run_dir}" -maxdepth 1 -type f -name 'lens_step_*.pt' -printf '%T@\t%p\n' \
+    | sort -n \
+    | tail -n 1 \
+    | cut -f2-
+}
+
+checkpoint_for_run() {
+  local run_dir="$1"
+  if [[ "${EVAL_STEP}" == "latest" ]]; then
+    latest_checkpoint_path "${run_dir}"
+  else
+    printf '%s/lens_step_%s.pt\n' "${run_dir}" "${EVAL_STEP}"
+  fi
+}
+
+mkdir -p "${OUT_ROOT}" "${STAGED_LENS_ROOT}"
+
+echo "[eval] src_root=${SRC_ROOT}"
+echo "[eval] out_root=${OUT_ROOT}"
+echo "[eval] staged_lens_root=${STAGED_LENS_ROOT}"
+echo "[eval] eval_steps=${EVAL_STEPS}"
+echo "[eval] eval_tokens=${EVAL_TOKENS}"
+echo "[eval] data_split=${DATA_SPLIT}"
+
+staged_count=0
+for run_name in "${RUNS[@]}"; do
+  run_dir="${SRC_ROOT}/${run_name}"
+  staged_run_dir="${STAGED_LENS_ROOT}/${run_name}"
+  mkdir -p "${staged_run_dir}"
+  cp -f "${run_dir}/activation_sites.csv" "${staged_run_dir}/activation_sites.csv"
+  cp -f "${run_dir}/run_config.csv" "${staged_run_dir}/run_config.csv"
+
+  for step in ${EVAL_STEPS}; do
+    if [[ "${step}" == "latest" ]]; then
+      checkpoint_path="$(latest_checkpoint_path "${run_dir}")"
+    else
+      checkpoint_path="${run_dir}/lens_step_${step}.pt"
+    fi
+
+    if [[ -z "${checkpoint_path}" || ! -f "${checkpoint_path}" ]]; then
+      echo "[stage] missing checkpoint for ${run_name}: ${checkpoint_path}"
+      exit 1
+    fi
+
+    cp -f "${checkpoint_path}" "${staged_run_dir}/$(basename "${checkpoint_path}")"
+    echo "[stage] ${run_name}/$(basename "${checkpoint_path}")"
+    staged_count=$((staged_count + 1))
+  done
+done
+
+echo "[eval] staged ${staged_count} checkpoint(s)"
+
+torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+  -m tuned_lens \
+  --log_level INFO \
+  eval \
+  --model.name gpt2 \
+  --data.name "${DATA_SPLIT}" \
+  --text_column text \
+  --max_seq_len "${MAX_LENGTH}" \
+  -o "${OUT_ROOT}" \
+  -l "${STAGED_LENS_ROOT}" \
+  --tokens "${EVAL_TOKENS}" \
+  --token_shift 0 \
+  --per_gpu_batch_size "${PER_GPU_BATCH_SIZE}"

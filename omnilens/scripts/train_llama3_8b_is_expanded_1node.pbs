@@ -1,0 +1,53 @@
+#!/bin/bash
+#PBS -N omnilens_llama3_8b_1node
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+REPO=/path/to/project/omnilens
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CKPT_BASE=$REPO/src/checkpoints
+
+module use /path/to/modulefiles
+module load conda
+conda activate omnilens
+source ~/.hf_env
+export PYTHONPATH=$REPO/src:$PYTHONPATH
+export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS=8
+
+echo "Node: $(hostname)  |  GPUs: $(nvidia-smi -L | wc -l)"
+
+# DDP across 4 GPUs: LLaMA 8B in bf16 = 16GB, fits on one A100 40GB.
+# Each rank holds its own teacher copy + lens slice — 4x lens parallelism
+# vs model_parallel which runs all lens sites on a single GPU.
+python -m torch.distributed.run \
+    --nnodes=1 --nproc_per_node=4 --standalone \
+    -m omnilens.cli.main train \
+    --model_name $MODEL \
+    --model_dtype bf16 \
+    --lens_type lora \
+    --lora_rank 64 \
+    --lora_init default_lora \
+    --loss_type subset_kl \
+    --subset_kl_mode is \
+    --subset_kl_k 512 \
+    --subset_kl_k_tail 1024 \
+    --activation_site_preset llama_expanded \
+    --data_source pile \
+    --max_seq_len 1024 \
+    --batch_size 2 \
+    --tokens_per_step 65536 \
+    --num_steps 50 \
+    --lr 1e-3 \
+    --warmup_steps 5 \
+    --lr_schedule cosine \
+    --amp \
+    --amp_dtype bf16 \
+    --save_every 25 \
+    --log_every 5 \
+    --base_output_dir $CKPT_BASE
+
+echo "Done."

@@ -1,0 +1,10 @@
+{
+  "corpus": "wikitext-2-raw-v1:test",
+  "tokens": 131072,
+  "seq_len": 1024,
+  "step": 1000,
+  "model": "gpt2",
+  "dtype": "fp32 teacher and lens",
+  "seed": 0,
+  "note": "trained = low-rank lens at rank r; truncated = full-rank Delta cut to rank r by SVD; random = same Delta projected onto a random r-dim subspace"
+}

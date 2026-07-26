@@ -1,0 +1,24 @@
+#!/bin/bash
+#PBS -l select=1
+#PBS -l walltime=00:30:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+cd /path/to/project/omnilens
+
+module use /path/to/modulefiles
+module load conda
+conda activate tuned_lens_env
+export PYTHONPATH="/path/to/project/omnilens/src:${PYTHONPATH:-}"
+
+torchrun \
+    --standalone \
+    --nnodes=1 \
+    --nproc-per-node=4 \
+    -m tuned_lens eval \
+    --model.name gpt2 \
+    --data.name test \
+    --lens_name /path/to/project/omnilens/my_lenses/testing/gpt2_lora_r64_subsetkl_head_is_k128_tail64_256_step256 \
+    --output /path/to/project/omnilens/evaluation/gpt2_lora_r64_subsetkl_head_is_k128_tail64_256_step256 \
+    --tokens 16400

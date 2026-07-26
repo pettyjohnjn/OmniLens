@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -N traj_apps_70b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Tuned-lens-paper trajectory applications at 70B (logit + LoRA Top-k+IS @250,
+# sharded over 4 GPUs). Reduced n=200 like the other 70B evaluations; the five
+# classification tasks run first so partial results survive a walltime kill.
+
+set -o pipefail
+EXP=/path/to/project/interp/experiments/trajectory_apps
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$EXP"
+
+python injection_detection.py capture --model llama70b --n 200 \
+  --tasks boolq,mnli,qnli,qqp,sst2,arc_easy,arc_challenge,sciq,logiqa,mc_taco \
+  --out "$EXP/results_llama70b"
+echo "capture exit $?"
+python injection_detection.py analyze --out "$EXP/results_llama70b"
+echo "TRAJ APPS 70B DONE"

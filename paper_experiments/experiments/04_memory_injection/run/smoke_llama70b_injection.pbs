@@ -1,0 +1,31 @@
+#!/bin/bash
+#PBS -N inj70b_smoke
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=00:40:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+EXP=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Llama-3.3-70B-Instruct
+CKPT=/path/to/project/lens_bundle/llama70b_lens/lens_step_250.pt
+OUT=$EXP/results_llama70b_smoke
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+unset CUDA_VISIBLE_DEVICES   # expose all 4 GPUs for device_map=auto sharding
+cd "$EXP"
+
+echo "=== SMOKE: LLaMA-3-70B injection (device_map=auto, 4 GPU), head+IS r64, hand, 8 ex, tweaks 1-3 ==="
+nvidia-smi --query-gpu=index,memory.total --format=csv,noheader
+python lens_tweak_factor_analysis.py \
+  --model-name "$MODEL" --checkpoint "$CKPT" \
+  --lens-type lora --lora-rank 64 \
+  --activation-site-preset llama_expanded --dtype bfloat16 \
+  --device-map auto \
+  --dataset hand --limit 8 --max-tweak 3 \
+  --output-dir "$OUT/is_r64/hand" 2>&1 | grep -vE 'Loading weights'
+echo "=== exit ${PIPESTATUS[0]} ==="

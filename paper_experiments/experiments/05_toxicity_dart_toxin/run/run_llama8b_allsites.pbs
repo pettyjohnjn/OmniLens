@@ -1,0 +1,51 @@
+#!/bin/bash
+#PBS -N tox8b_allsites
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# 8B whole-model toxicity audit, packed into one job:
+#   Phase A (GPU 0):     score all 6x32 sites through the head+IS lens -> toxic_sites_is.csv
+#   Phase B (GPUs 0-3):  per-site-type lens-direction subtraction sweeps, 2/2/1/1 split,
+#                        baseline row reused from the existing ToxIn run (same settings).
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CK=/path/to/project/omnilens/src/checkpoints
+IS=$CK/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0/lens_step_1000.pt
+SITES=$TOX/results_llama8b/allhooks/toxic_sites_is.csv
+BASE=$TOX/results_llama8b/toxin/ablation_summary.csv
+OUT=$TOX/results_llama8b/allhooks
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$TOX"
+
+echo "======== Phase A: site scoring (GPU 0) ========"
+CUDA_VISIBLE_DEVICES=0 python llama_allsites_audit.py score \
+  --model-name "$MODEL" --checkpoint "$IS" \
+  --sites-csv "$SITES" 2>&1 | grep -E 'prompts|captured|Saved|L[0-9]|lens'
+echo "---- score exit ${PIPESTATUS[0]} ----"
+[ -f "$SITES" ] || { echo "FATAL: no sites csv"; exit 1; }
+
+echo "======== Phase B: ablation sweeps (4 GPUs) ========"
+ablate() {  # $1=gpu $2...=site types
+  local gpu=$1; shift
+  CUDA_VISIBLE_DEVICES=$gpu python llama_allsites_audit.py ablate \
+    --model-name "$MODEL" --checkpoint "$IS" \
+    --sites-csv "$SITES" --out-root "$OUT" \
+    --baseline-csv "$BASE" \
+    --site-types "$@" 2>&1 | sed "s/^/[gpu$gpu] /" | grep -E 'sites:|lam=|Saved|Baseline'
+  echo "---- gpu$gpu ($*) exit done ----"
+}
+ablate 0 attn_in mlp_in &
+ablate 1 attn_out mlp_out &
+ablate 2 resid_mid &
+ablate 3 resid_post &
+wait
+echo "8B ALLSITES AUDIT DONE"

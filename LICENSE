@@ -1,0 +1,47 @@
+MIT License
+
+Copyright (c) 2026 The OmniLens Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+THIRD-PARTY CODE
+
+paper_experiments/experiments/01_rank_ablation_estimator/run/tuned_lens/
+
+    A modified copy of the `tuned-lens` package (Belrose et al., "Eliciting
+    Latent Predictions from Transformers with the Tuned Lens", 2023), used to
+    evaluate the full-rank tuned-lens baseline under exactly the same loop as
+    the original work. The upstream project is distributed under the MIT
+    License and remains under its own copyright. Modifications are limited to
+    checkpoint loading and evaluation plumbing needed to score our lens
+    formats with the unmodified upstream metric code.
+
+paper_experiments/experiments/04_memory_injection/run/datasets/
+
+    multi_hop_1000.csv is derived from the 2WikiMultiHop dataset, redistributed
+    under its original license.
+
+    handwritten_obscure_explicit_data.csv is the handwritten obscure/explicit
+    probe set introduced by Sakarvadia et al., "Memory Injections: Correcting
+    Multi-Hop Reasoning Failures during Inference in Transformer-Based Language
+    Models" (2023). It is redistributed unmodified so that the memory-injection
+    case study is evaluated on exactly the prompts used in the original work,
+    and it remains under its own copyright.

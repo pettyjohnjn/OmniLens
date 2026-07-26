@@ -1,0 +1,74 @@
+/path/to/conda/envs/omnilens/lib/python3.10/runpy.py:126: RuntimeWarning: 'omnilens.cli.main' found in sys.modules after import of package 'omnilens.cli', but prior to execution of 'omnilens.cli.main'; this may result in unpredictable behaviour
+  warn(RuntimeWarning(msg))
+[INFO] Config: TrainConfig(model_name='meta-llama/Meta-Llama-3-8B-Instruct', model_revision=None, tokenizer_name=None, data_source='pile', text_paths=[], text_mode='lines', text_json_field='text', pile_split='train', max_seq_len=8192, stride=8192, drop_remainder=True, document_separated=True, max_docs=None, lens_type='lora', lora_rank=64, lora_alpha=64.0, lora_init='default_lora', lora_init_calibration_tokens=50000, lora_init_ridge_lambda=0.001, lora_init_ridge_lambda_scale='trace_xxt_over_d', lora_init_stats_dtype='float32', lora_init_jitter=1e-06, lora_init_svd_metric='residual', lora_init_normalization='none', activation_site_preset='llama_expanded', loss_type='kl', kl_chunk_size=4096, subset_kl_k=128, subset_kl_mode='topk', subset_kl_k_tail=0, subset_kl_tail_proposal='target', subset_kl_tail_proposal_alpha=0.8, subset_kl_tail_proposal_tau=0.7, shared_subset_top_m=16, shared_subset_max_K=512, token_shift=0, per_gpu_batch_size=2, num_steps=3, lr=0.001, weight_decay=0.0, warmup_steps=0, lr_schedule='constant', min_lr_ratio=0.0, grad_clip_norm=1.0, tokens_per_step=16384, max_microsteps=512, amp_enabled=True, amp_dtype='bf16', ddp_enabled=True, ddp_backend='nccl', model_parallel=False, model_dtype='bf16', model_gpu_ids=None, per_gpu_max_memory=None, cpu_offload_gb=0, attn_implementation=None, multinode_model_parallel=False, fsdp_offload_to_cpu=False, log_every=1, log_memory=True, save_every=1000, save_initial_checkpoint=False, output_dir=PosixPath('/path/to/project/omnilens/benchmarks/readout_scaling_8b/fullkl_s8192'), resume_checkpoint=None, seed=0, run_tag=None)
+[INFO] DDP: DDPState(enabled=False, rank=0, world_size=1, device=cuda)
+[INFO] Loading model: meta-llama/Meta-Llama-3-8B-Instruct
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 291/291 [00:00<00:00, 8930.45it/s]
+[INFO] Lens: LowRankLens(vocab_size=128256, r=64, layers=194, params=102,506,496/627,847,168)
+[INFO] Loss: KLDivergenceLoss(reduction='mean', temperature=1.0, chunk_size=4096)
+[INFO] Activation sites: preset=llama_expanded count=194
+Traceback (most recent call last):
+  File "/path/to/conda/envs/omnilens/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/path/to/conda/envs/omnilens/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/path/to/project/omnilens/src/omnilens/cli/main.py", line 876, in <module>
+    main()
+  File "/path/to/project/omnilens/src/omnilens/cli/main.py", line 870, in main
+    train(args)
+  File "/path/to/project/omnilens/src/omnilens/cli/main.py", line 585, in train
+    trainer.train(dataloader_factory, optimizer, scheduler)
+  File "/path/to/project/omnilens/src/omnilens/training/trainer.py", line 215, in train
+    self._train_loop(lens, optimizer, scheduler, data_iter, dataloader_factory)
+  File "/path/to/project/omnilens/src/omnilens/training/trainer.py", line 272, in _train_loop
+    micro_loss = self._forward_backward_layerwise(
+  File "/path/to/project/omnilens/src/omnilens/training/trainer.py", line 349, in _forward_backward_layerwise
+    activations = self.collector.collect_with_grad(
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/hookbox/collector.py", line 414, in collect_with_grad
+    outputs = self._wrapped_model(
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/utils/generic.py", line 843, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 487, in forward
+    outputs: BaseModelOutputWithPast = self.model(
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/utils/generic.py", line 917, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/utils/output_capturing.py", line 253, in wrapper
+    outputs = func(self, *args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 422, in forward
+    hidden_states = decoder_layer(
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/modeling_layers.py", line 93, in __call__
+    return super().__call__(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1882, in _call_impl
+    return inner()
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1830, in inner
+    result = forward_call(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 335, in forward
+    hidden_states = self.mlp(hidden_states)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 183, in forward
+    down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/transformers/activations.py", line 103, in forward
+    return nn.functional.silu(input)
+  File "/path/to/conda/envs/omnilens/lib/python3.10/site-packages/torch/nn/functional.py", line 2395, in silu
+    return torch._C._nn.silu(input)
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 448.00 MiB. GPU 0 has a total capacity of 39.49 GiB of which 264.12 MiB is free. Including non-PyTorch memory, this process has 39.23 GiB memory in use. Of the allocated memory 34.97 GiB is allocated by PyTorch, and 3.76 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

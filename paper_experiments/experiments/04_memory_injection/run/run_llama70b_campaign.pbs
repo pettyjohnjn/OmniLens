@@ -1,0 +1,51 @@
+#!/bin/bash
+#PBS -N llama70b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=02:00:00
+#PBS -q prod
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+INJ=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Llama-3.3-70B-Instruct
+CKPT=/path/to/project/lens_bundle/llama70b_lens/lens_step_250.pt
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset CUDA_VISIBLE_DEVICES   # expose all 4 GPUs for device_map=auto
+
+echo "############## 70B INJECTION (head+IS r64) ##############"
+cd "$INJ"
+for DS in hand 2wmh; do
+  LIM=""; [ "$DS" = "2wmh" ] && LIM="--limit 300"
+  echo "==== injection ds=$DS ===="
+  python lens_tweak_factor_analysis.py \
+    --model-name "$MODEL" --checkpoint "$CKPT" \
+    --lens-type lora --lora-rank 64 --activation-site-preset llama_expanded \
+    --dtype bfloat16 --device-map auto \
+    --dataset "$DS" --max-tweak 10 $LIM \
+    --output-dir "$INJ/results_llama70b/injection/is_r64/$DS" 2>&1 | grep -vE 'Loading weights'
+  echo "---- injection $DS exit ${PIPESTATUS[0]} ----"
+done
+
+echo "############## 70B DART localization (head+IS + logit reference) ##############"
+cd "$TOX"; mkdir -p "$TOX/results_llama70b/dart"
+echo "==== DART head+IS ===="
+python llama_dart_localization.py \
+  --model-name "$MODEL" --checkpoint "$CKPT" \
+  --lens-type lora --lora-rank 64 --activation-site-preset llama_expanded \
+  --dtype bfloat16 --device-map auto --n-prompts 150 \
+  --out-csv "$TOX/results_llama70b/dart/toxic_heads_is_r64.csv" 2>&1 | grep -vE 'Loading weights'
+echo "---- DART head+IS exit ${PIPESTATUS[0]} ----"
+echo "==== DART logit (reference) ===="
+python llama_dart_localization.py \
+  --model-name "$MODEL" \
+  --lens-type logit --activation-site-preset llama_expanded \
+  --dtype bfloat16 --device-map auto --n-prompts 150 \
+  --out-csv "$TOX/results_llama70b/dart/toxic_heads_logit.csv" 2>&1 | grep -vE 'Loading weights'
+echo "---- DART logit exit ${PIPESTATUS[0]} ----"
+echo "ALL 70B RUNS DONE"

@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -N inj8b_alllens
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# LLaMA-3-8B: logit-lens injection readout sweeps (new variant) +
+# causal profile re-runs with damage metrics (KL vs clean, top-1 retention).
+
+set -o pipefail
+EXP=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CK=/path/to/project/omnilens/src/checkpoints
+IS=$CK/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0/lens_step_1000.pt
+OUT=$EXP/results_llama8b_expanded
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0
+cd "$EXP"
+
+# $1=tag $2=ckpt_flag $3=lens_type $4=dataset $5=extra_flags
+run() {
+  echo "======== 8B expanded | lens=$1 | ds=$4 | $5 ========"
+  python lens_tweak_factor_analysis.py \
+    --model-name "$MODEL" $2 \
+    --lens-type "$3" --lora-rank 64 \
+    --activation-site-preset llama_expanded --dtype bfloat16 \
+    --dataset "$4" --min-tweak 0 --max-tweak 10 --limit 200 \
+    --output-dir "$OUT/$1/$4" $5 2>&1 | grep -E '^===|causal|Saved|Loaded|Using|Active|Sweep|best causal'
+  echo "---- exit ${PIPESTATUS[0]} ----"
+}
+
+# causal re-runs first (the paper-critical damage numbers), then logit sweeps
+run is_r64 "--checkpoint $IS" lora 2wmh "--causal --causal-only --causal-batch 32 --causal-taus 1 2 4"
+run is_r64 "--checkpoint $IS" lora hand "--causal --causal-only --causal-batch 32 --causal-taus 1 2 4"
+run logit "" logit 2wmh ""
+run logit "" logit hand ""
+echo "8B ALLLENS DONE"

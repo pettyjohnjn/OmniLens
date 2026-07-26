@@ -1,0 +1,42 @@
+#!/bin/bash
+#PBS -N inj8b_cpred
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+EXP=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CK=/path/to/project/omnilens/src/checkpoints
+IS=$CK/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0/lens_step_1000.pt
+TOPK=$CK/meta-llama-3-8b-instruct/lora-r64/subset_kl-topk-k512/llama_expanded/init-default/seed0/lens_step_250.pt
+OUT=$EXP/results_llama8b_expanded
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0
+cd "$EXP"
+
+run() {  # $1=tag $2=ckpt $3=dataset $4=extra
+  echo "======== 8B expanded | lens=$1 | ds=$3 | $4 ========"
+  python lens_tweak_factor_analysis.py \
+    --model-name "$MODEL" --checkpoint "$2" \
+    --lens-type lora --lora-rank 64 \
+    --activation-site-preset llama_expanded --dtype bfloat16 \
+    --dataset "$3" --min-tweak 0 --max-tweak 10 --limit 200 \
+    --output-dir "$OUT/$1/$3" $4 2>&1 | grep -E '^===|causal|Saved|Loaded|Active|Sweep|best causal'
+  echo "---- exit ${PIPESTATUS[0]} ----"
+}
+
+# causal profile computed once per dataset (lens-independent) on the head+IS run.
+# `hand` is the informative set: 2WMH's explicit prompts score BELOW the implicit
+# ones, so its memory vector points to a worse state and the causal effect is nil.
+run is_r64   "$IS"   hand "--causal --causal-batch 32 --causal-taus 1 2 4"
+run topk_r64 "$TOPK" hand ""
+run is_r64   "$IS"   2wmh "--causal --causal-batch 32 --causal-taus 1 2 4"
+run topk_r64 "$TOPK" 2wmh ""
+echo "8B CAUSAL+LENSPRED DONE"

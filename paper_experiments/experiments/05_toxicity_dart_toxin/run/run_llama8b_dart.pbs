@@ -1,0 +1,37 @@
+#!/bin/bash
+#PBS -N dart8b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+EXP=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CK=/path/to/project/omnilens/src/checkpoints
+CKPT_MC=$CK/models-meta-llama-meta-llama-3-8b-instruct/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0/lens_step_1000.pt
+CKPT_TOPK=$CK/meta-llama-3-8b-instruct/lora-r64/subset_kl-topk-k512/llama_expanded/init-default/seed0/lens_step_250.pt
+OUT=$EXP/results_llama8b/dart
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=0
+cd "$EXP"
+mkdir -p "$OUT"
+
+dart() {  # $1=tag $2=ckpt
+  echo "======== 8B DART localization | lens=$1 ========"
+  python llama_dart_localization.py \
+    --model-name "$MODEL" --checkpoint "$2" \
+    --lens-type lora --lora-rank 64 --activation-site-preset llama_expanded \
+    --dtype bfloat16 --n-prompts 150 \
+    --out-csv "$OUT/toxic_heads_${1}.csv" 2>&1
+  echo "---- exit ${PIPESTATUS[0]} ----"
+}
+
+dart is_r64   "$CKPT_MC"
+dart topk_r64 "$CKPT_TOPK"
+echo "ALL DART RUNS DONE"

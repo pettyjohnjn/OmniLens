@@ -1,0 +1,69 @@
+#!/bin/bash
+#PBS -N tox_heads_tuned
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -j oe
+#PBS -o /path/to/project/interp/_jobs/tox_heads_tuned.log
+
+# Adds the TUNED head-selector ROW to the toxicity ablation matrix.
+#   Step 1: discover toxic heads by projecting head outputs through the TUNED lens.
+#   Step 2: ablate those heads with each direction method (1 GPU per method, into
+#           per-method temp dirs to avoid the shared-summary.csv race).
+#   Step 3: assemble heads_tuned/ in the standard {method}/scale_*/result.json layout.
+# Direction-method scales mirror the existing rows (tuned col gets the extra 0.50).
+set -uo pipefail
+REPO=/path/to/project/interp
+OMNILENS=/path/to/project/omnilens/src
+SUBSETKL=/path/to/project/packages/subset-kl/src
+EVAL=${EVAL:-/path/to/project/evaluation_900step}
+HEADS_DIR=$EVAL/toxicity_heads_per_method
+OUT_DIR=$EVAL/toxicity_ablation_matrix
+TMP=$OUT_DIR/_heads_tuned_tmp
+DST=$OUT_DIR/heads_tuned
+S=$REPO/experiments/toxicity_ablation
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+source ~/.hf_env
+export HF_HOME=/path/to/hf_cache
+export PYTHONPATH=$REPO/src:$OMNILENS:$SUBSETKL:${PYTHONPATH:-}
+export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+mkdir -p $HEADS_DIR $OUT_DIR $TMP
+echo "[$(date)] node=$(hostname) EVAL=$EVAL"
+python -c "from interp import config; print('  tuned lens:', config.CKPT_TUNED)"
+
+echo "[$(date)] Step 1: tuned head discovery"
+CUDA_VISIBLE_DEVICES=0 python $S/find_toxic_heads_per_method.py \
+    --methods tuned --out_dir $HEADS_DIR --n_prompts 200 --device cuda
+echo "[$(date)] head discovery done"; ls -lh $HEADS_DIR/toxic_heads_tuned.csv
+
+echo "[$(date)] Step 2: ablation matrix for heads_tuned (1 GPU per direction)"
+SCALES_BASE="0.05 0.10 0.17 0.25 0.35"
+SCALES_TUNED="0.05 0.10 0.17 0.25 0.35 0.50"
+run_ablation() {  # gpu  method  scales
+  CUDA_VISIBLE_DEVICES=$1 python $S/toxicity_ablation.py \
+      --out_dir          $TMP/$2 \
+      --toxic_heads_csv  $HEADS_DIR/toxic_heads_tuned.csv \
+      --methods          $2 \
+      --memory_scales    $3 \
+      --n_toxic_prompts  100 --max_new_tokens 20 \
+      --perplexity_windows 64 --perplexity_stride 512 --device cuda
+}
+run_ablation 0 unembed     "$SCALES_BASE"  &
+run_ablation 1 lora_r64    "$SCALES_BASE"  &
+run_ablation 2 tuned       "$SCALES_TUNED" &
+wait
+echo "[$(date)] ablation done"
+
+echo "[$(date)] Step 3: assemble $DST"
+mkdir -p $DST
+for m in unembed lora_r64 tuned; do
+  rm -rf $DST/$m
+  cp -r $TMP/$m/$m $DST/$m
+done
+# baseline row is direction-independent; take it from any run's summary.csv
+cp $TMP/unembed/summary.csv $DST/summary.csv
+ls -R $DST | head -40
+echo "[$(date)] heads_tuned row complete → $DST"

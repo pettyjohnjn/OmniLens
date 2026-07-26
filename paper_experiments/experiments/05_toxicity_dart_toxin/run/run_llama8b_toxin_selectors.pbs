@@ -1,0 +1,38 @@
+#!/bin/bash
+#PBS -N toxin_sel8b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# 8B head-SELECTOR comparison (the 8B analog of the GPT-2 selector matrix):
+# ToxIn with the same unembed ablation direction on the top-15 heads flagged by
+# each lens. is@300 (toxin/), is@250 (toxin_step250/) and random already exist.
+#   GPU0: tuned-8B-selected heads   GPU1: logit-selected   GPU2: topk-selected
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$TOX"
+
+run() {  # $1=gpu $2=dart-csv tag $3=out tag
+  CUDA_VISIBLE_DEVICES=$1 python llama_toxin_ablation.py \
+    --model-name "$MODEL" \
+    --dart-csv "$TOX/results_llama8b/dart/toxic_heads_$2.csv" \
+    --dtype bfloat16 --n-top 15 --n-prompts 100 --max-new-tokens 20 \
+    --ppl-windows 32 --lambdas 0.0 0.05 0.1 0.2 0.3 \
+    --out-csv "$TOX/results_llama8b/toxin_$3/ablation_summary.csv" \
+    2>&1 | sed "s/^/[$3] /" | grep -E 'top|tox|ppl|Saved|exit'
+  echo "---- $3 exit ${PIPESTATUS[0]} ----"
+}
+run 0 tuned8b tuned8b &
+run 1 logit logit &
+run 2 topk_r64 topk &
+wait
+echo "TOXIN SELECTORS 8B DONE"

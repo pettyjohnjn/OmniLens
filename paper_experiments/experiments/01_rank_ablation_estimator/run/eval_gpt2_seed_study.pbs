@@ -1,0 +1,90 @@
+#!/bin/bash
+#PBS -N gpt2sdevl
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -l select=1:system=YOUR_PBS_SYSTEM:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -j oe
+#PBS -o /path/to/project/eval_harness/logs/
+
+# Evaluate the 15 new GPT-2 seed-study / RS-baseline lenses (all at step 1000)
+# with the identical Belrose eval loop used for every Table-1/2 number:
+# 131,072 Pile-test tokens, residual hookset. Outputs land in a NEW tree
+# (evaluation/gpt2_seed_study_1000); nothing existing is touched.
+#
+# Runs: tuned+full-KL s1,s2; LoRA-r64+full-KL s1,s2; topk k1024 s1,s2;
+#       IS 512+512 s1,s2; RS (k_head=0) tail 512 s0-2, tail 1024 s0-2,
+#       tail 1536 s0.  Seed-0 evals for the four replicated recipes already
+#       exist in the older sweep trees and are reused by the aggregator.
+
+set -euo pipefail
+
+cd /path/to/project/eval_harness
+
+module use /path/to/modulefiles
+module load conda
+conda activate tuned_lens_env
+
+export HF_HOME=/path/to/hf_cache
+export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
+export HF_DATASETS_CACHE="${HF_HOME}/datasets"
+export PYTHONPATH="/path/to/project/eval_harness:/path/to/project/omnilens/src:/path/to/project/packages/subset-kl/src:${PYTHONPATH:-}"
+export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+
+CKPT=/path/to/project/omnilens/src/checkpoints/gpt2
+OUT_ROOT=/path/to/project/omnilens/evaluation/gpt2_seed_study_1000
+EVAL_TOKENS=131072
+MAX_LENGTH=1024
+PER_GPU_BATCH_SIZE=1
+
+JOB_TOKEN="${PBS_JOBID:-manual.$$}"; JOB_TOKEN="${JOB_TOKEN%%.*}"
+STAGED=/path/to/project/eval_harness/tmp/eval_gpt2_seed_study_${JOB_TOKEN}
+
+# staged run name -> source checkpoint dir (name becomes the eval dir prefix)
+declare -A RUNS=(
+  [tuned_kl_seed1]="$CKPT/tuned/kl/residual/seed1"
+  [tuned_kl_seed2]="$CKPT/tuned/kl/residual/seed2"
+  [lora_kl_r64_seed1]="$CKPT/lora-r64/kl/residual/init-default/seed1"
+  [lora_kl_r64_seed2]="$CKPT/lora-r64/kl/residual/init-default/seed2"
+  [lora_subset_topk_r64_k1024_seed1]="$CKPT/lora-r64/subset_kl-topk-k1024/residual/init-default/seed1"
+  [lora_subset_topk_r64_k1024_seed2]="$CKPT/lora-r64/subset_kl-topk-k1024/residual/init-default/seed2"
+  [lora_subset_is_r64_k512_tail512_seed1]="$CKPT/lora-r64/subset_kl-is-k512-tail512/residual/init-default/seed1"
+  [lora_subset_is_r64_k512_tail512_seed2]="$CKPT/lora-r64/subset_kl-is-k512-tail512/residual/init-default/seed2"
+  [lora_subset_rs_r64_tail512_seed0]="$CKPT/lora-r64/subset_kl-is-k0-tail512/residual/init-default/seed0"
+  [lora_subset_rs_r64_tail512_seed1]="$CKPT/lora-r64/subset_kl-is-k0-tail512/residual/init-default/seed1"
+  [lora_subset_rs_r64_tail512_seed2]="$CKPT/lora-r64/subset_kl-is-k0-tail512/residual/init-default/seed2"
+  [lora_subset_rs_r64_tail1024_seed0]="$CKPT/lora-r64/subset_kl-is-k0-tail1024/residual/init-default/seed0"
+  [lora_subset_rs_r64_tail1024_seed1]="$CKPT/lora-r64/subset_kl-is-k0-tail1024/residual/init-default/seed1"
+  [lora_subset_rs_r64_tail1024_seed2]="$CKPT/lora-r64/subset_kl-is-k0-tail1024/residual/init-default/seed2"
+  [lora_subset_rs_r64_tail1536_seed0]="$CKPT/lora-r64/subset_kl-is-k0-tail1536/residual/init-default/seed0"
+)
+
+mkdir -p "$OUT_ROOT" "$STAGED"
+echo "[eval] out_root=$OUT_ROOT staged=$STAGED"
+
+for name in "${!RUNS[@]}"; do
+  src="${RUNS[$name]}"
+  dst="$STAGED/$name"
+  mkdir -p "$dst"
+  cp -f "$src/activation_sites.csv" "$src/run_config.csv" "$dst/"
+  cp -f "$src/lens_step_1000.pt" "$dst/lens_step_1000.pt"
+  echo "[stage] $name <- $src"
+done
+
+torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+  -m tuned_lens \
+  --log_level INFO \
+  eval \
+  --model.name gpt2 \
+  --data.name test \
+  --text_column text \
+  --max_seq_len "$MAX_LENGTH" \
+  -o "$OUT_ROOT" \
+  -l "$STAGED" \
+  --tokens "$EVAL_TOKENS" \
+  --token_shift 0 \
+  --per_gpu_batch_size "$PER_GPU_BATCH_SIZE"
+
+echo "[eval] done: $(ls $OUT_ROOT | wc -l) run dirs in $OUT_ROOT"

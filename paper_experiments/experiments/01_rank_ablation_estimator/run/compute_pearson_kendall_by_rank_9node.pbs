@@ -1,0 +1,88 @@
+#!/bin/bash
+#PBS -N gpt2_pk_by_rank
+#PBS -l select=9:system=YOUR_PBS_SYSTEM:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+#PBS -j oe
+
+set -euo pipefail
+
+cd /path/to/project/eval_harness
+
+RANKS="${RANKS:-1 4 8 16 32 64 128 256 384}"
+FAMILIES="${FAMILIES:-lora_full lora_topk lora_head_is}"
+MODEL_NAME="${MODEL_NAME:-gpt2}"
+TOKENS="${TOKENS:-131072}"
+MAX_RAW_DOCS="${MAX_RAW_DOCS:-8192}"
+POSITIONS="${POSITIONS:-8192}"
+KENDALL_K="${KENDALL_K:-100}"
+BATCH_SIZE="${BATCH_SIZE:-1}"
+MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
+DATA_NAME="${DATA_NAME:-test}"
+DTYPE="${DTYPE:-bfloat16}"
+BASE_OUT_DIR="${BASE_OUT_DIR:-/path/to/project/eval_harness/evaluation/gpt2_preemptable_sweep_1000/plots/pearson_kendall_token_level_by_rank}"
+RUN_REGEX="${RUN_REGEX:-}"
+EXCLUDE_RUN_REGEX="${EXCLUDE_RUN_REGEX:-}"
+JOB_TAG="${PBS_JOBID%%.*}"
+if [[ "${USE_SHARED_OUT_DIR:-0}" == "1" ]]; then
+  JOB_OUT_DIR="${BASE_OUT_DIR}"
+else
+  JOB_OUT_DIR="${BASE_OUT_DIR}/${JOB_TAG}"
+fi
+
+mapfile -t NODES < <(awk '!seen[$0]++' "${PBS_NODEFILE}")
+read -r -a RANK_ARRAY <<< "${RANKS}"
+
+if (( ${#NODES[@]} < ${#RANK_ARRAY[@]} )); then
+  echo "Need ${#RANK_ARRAY[@]} nodes for ranks: ${RANKS}; got ${#NODES[@]} nodes."
+  exit 1
+fi
+
+mkdir -p "${JOB_OUT_DIR}"
+
+echo "[rank-shard] nodes=${NODES[*]}"
+echo "[rank-shard] ranks=${RANK_ARRAY[*]}"
+echo "[rank-shard] families=${FAMILIES}"
+echo "[rank-shard] base_out_dir=${BASE_OUT_DIR}"
+echo "[rank-shard] job_out_dir=${JOB_OUT_DIR}"
+
+failed=0
+export RANKS
+export FAMILIES
+export MODEL_NAME
+export TOKENS
+export MAX_RAW_DOCS
+export POSITIONS
+export KENDALL_K
+export BATCH_SIZE
+export MAX_SEQ_LEN
+export DATA_NAME
+export DTYPE
+export JOB_OUT_DIR
+export RUN_REGEX
+export EXCLUDE_RUN_REGEX
+
+echo "[rank-shard] launching ${#RANK_ARRAY[@]} MPI workers with ppn=1"
+if ! mpiexec --no-transfer --label --line-buffer -n "${#RANK_ARRAY[@]}" --ppn 1 --gpu-bind per_task:1 \
+  /path/to/project/eval_harness/run_pearson_kendall_rank_mpi_worker.sh
+then
+  failed=1
+fi
+
+for rank in "${RANK_ARRAY[@]}"; do
+  if [[ ! -s "${JOB_OUT_DIR}/rank_${rank}/rank_summary.csv" ]]; then
+    echo "[rank-shard] missing output for rank=${rank}: ${JOB_OUT_DIR}/rank_${rank}/rank_summary.csv"
+    failed=1
+  fi
+done
+
+if (( failed == 0 )); then
+  /path/to/conda/envs/tuned_lens_env/bin/python3.9 \
+    merge_pearson_kendall_shards.py \
+    --shard-root "${JOB_OUT_DIR}" \
+    --out-dir "${JOB_OUT_DIR}/merged"
+fi
+
+exit "${failed}"

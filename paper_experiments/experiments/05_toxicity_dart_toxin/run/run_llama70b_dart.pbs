@@ -1,0 +1,36 @@
+#!/bin/bash
+#PBS -N dart70b
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+set -o pipefail
+TOX=/path/to/project/interp/experiments/toxicity_ablation
+MODEL=meta-llama/Llama-3.3-70B-Instruct
+CKPT=/path/to/project/lens_bundle/llama70b_lens/lens_step_250.pt
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset CUDA_VISIBLE_DEVICES
+cd "$TOX"; mkdir -p results_llama70b/dart
+
+echo "==== 70B DART head+IS ===="
+python llama_dart_localization.py \
+  --model-name "$MODEL" --checkpoint "$CKPT" \
+  --lens-type lora --lora-rank 64 --activation-site-preset llama_expanded \
+  --dtype bfloat16 --device-map auto --n-prompts 150 \
+  --out-csv results_llama70b/dart/toxic_heads_is_r64.csv 2>&1 | grep -vE 'Loading weights'
+echo "---- DART head+IS exit ${PIPESTATUS[0]} ----"
+
+echo "==== 70B DART logit (reference) ===="
+python llama_dart_localization.py \
+  --model-name "$MODEL" \
+  --lens-type logit --activation-site-preset llama_expanded \
+  --dtype bfloat16 --device-map auto --n-prompts 150 \
+  --out-csv results_llama70b/dart/toxic_heads_logit.csv 2>&1 | grep -vE 'Loading weights'
+echo "---- DART logit exit ${PIPESTATUS[0]} ----"
+echo "ALL 70B DART DONE"

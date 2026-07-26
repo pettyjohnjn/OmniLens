@@ -1,0 +1,61 @@
+#!/bin/bash
+#PBS -N traj_apps
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Tuned-lens-paper trajectory applications, per lens variant, full-sample run:
+#   prompt-injection anomaly detection (iForest x5-seed ensemble / LOF, fit on
+#   clean only, paired bootstrap vs the full-rank reference) + prediction depth
+#   + the classic per-position trajectory grids.
+# GPU 0: GPT-2 zero-shot n=1000 (10 tasks) + GPT-2 trajectory grid
+# GPU 1: LLaMA-3-8B zero-shot n=1000
+# GPU 2: LLaMA-3-8B 5-shot n=600
+# GPU 3: LLaMA-3-8B trajectory grid
+
+set -o pipefail
+EXP=/path/to/project/interp/experiments/trajectory_apps
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$EXP"
+mkdir -p grids
+
+( CUDA_VISIBLE_DEVICES=0 python injection_detection.py capture \
+    --model gpt2 --n 1000 --out "$EXP/results_gpt2" && \
+  CUDA_VISIBLE_DEVICES=0 python injection_detection.py grid \
+    --model gpt2 --out "$EXP/grids/gpt2_ioi.json" ) \
+  > capture_gpt2.log 2>&1 &
+P0=$!
+
+CUDA_VISIBLE_DEVICES=1 python injection_detection.py capture \
+  --model llama8b --n 1000 --out "$EXP/results_llama8b" \
+  > capture_llama8b.log 2>&1 &
+P1=$!
+
+CUDA_VISIBLE_DEVICES=2 python injection_detection.py capture \
+  --model llama8b --n 600 --fewshot 5 --out "$EXP/results_llama8b_fs5" \
+  > capture_llama8b_fs5.log 2>&1 &
+P2=$!
+
+CUDA_VISIBLE_DEVICES=3 python injection_detection.py grid \
+  --model llama8b --out "$EXP/grids/llama8b_ioi.json" \
+  > grid_llama8b.log 2>&1 &
+P3=$!
+
+wait $P0; RC0=$?
+wait $P1; RC1=$?
+wait $P2; RC2=$?
+wait $P3; RC3=$?
+echo "exit codes: gpt2=$RC0 8b=$RC1 8b_fs5=$RC2 8b_grid=$RC3"
+tail -13 capture_gpt2.log capture_llama8b.log capture_llama8b_fs5.log
+
+for d in results_gpt2 results_llama8b results_llama8b_fs5; do
+  echo "======== analyze $d ========"
+  python injection_detection.py analyze --out "$EXP/$d"
+done
+echo "TRAJ APPS DONE"

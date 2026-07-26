@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -N par250evB
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# 8B downstream evaluation, phase B: injection sweeps for the two low-rank
+# parity lenses (head+IS, top-k), one dataset per GPU. Feeds the 8B low-rank
+# columns and the site-selection comparison. All outputs go to *_parity250 dirs.
+#   GPU0: head+IS 2wmh   GPU1: head+IS hand   GPU2: topk 2wmh   GPU3: topk hand
+
+set -o pipefail
+INJ=/path/to/project/memory_injections/experiments/tweak_factor_analysis
+MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+CKR=/path/to/project/omnilens/src/checkpoints/models-meta-llama-meta-llama-3-8b-instruct
+IS=$CKR/lora-r64/subset_kl-is-k512-tail1024/llama_expanded/init-default/seed0-parity250/lens_step_250.pt
+TOPK=$CKR/lora-r64/subset_kl-topk-k512/llama_expanded/init-default/seed0-parity250/lens_step_250.pt
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$INJ"
+
+sweep() {  # $1=gpu $2=tag $3=checkpoint $4=dataset
+  echo "======== 8B injection | $2 | $4 ========"
+  CUDA_VISIBLE_DEVICES=$1 python lens_tweak_factor_analysis.py \
+    --model-name "$MODEL" --checkpoint "$3" --lens-type lora --lora-rank 64 \
+    --activation-site-preset llama_expanded --dtype bfloat16 \
+    --dataset "$4" --min-tweak 0 --max-tweak 10 --limit 200 \
+    --output-dir "$INJ/results_llama8b_expanded/$2/$4" \
+    2>&1 | grep -E '^===|Saved|Loaded|Sweep|best' | tail -5
+  echo "---- inj $2 $4 exit ${PIPESTATUS[0]} ----"
+}
+
+sweep 0 is_parity250   "$IS"   2wmh &
+sweep 1 is_parity250   "$IS"   hand &
+sweep 2 topk_parity250 "$TOPK" 2wmh &
+sweep 3 topk_parity250 "$TOPK" hand &
+wait
+echo "PARITY250 EVAL PHASE B DONE"

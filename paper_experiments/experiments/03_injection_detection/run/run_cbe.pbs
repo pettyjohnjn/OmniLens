@@ -1,0 +1,36 @@
+#!/bin/bash
+#PBS -N traj_cbe
+#PBS -l select=1:ncpus=32:ngpus=4
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -l filesystems=YOUR_PBS_FILESYSTEMS
+#PBS -A YOUR_PBS_ACCOUNT
+
+# Causal basis extraction (Belrose et al. 2023) per lens variant:
+# GPU 0: GPT-2 (5 layers x 16 dirs, logit/tuned/topk/is)
+# GPU 1: LLaMA-3-8B (7 layers x 16 dirs, logit/tuned/topk/is)
+
+set -o pipefail
+EXP=/path/to/project/interp/experiments/trajectory_apps
+
+module use /path/to/modulefiles; module load conda; conda activate omnilens
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export HF_HOME=/path/to/hf_cache
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+cd "$EXP"
+
+CUDA_VISIBLE_DEVICES=0 python cbe.py --model gpt2 \
+  --layers 2,4,6,8,10 --k 16 --max-iter 40 \
+  --out "$EXP/results_cbe_gpt2" > cbe_gpt2.log 2>&1 &
+P0=$!
+
+CUDA_VISIBLE_DEVICES=1 python cbe.py --model llama8b \
+  --layers 4,8,12,16,20,24,28 --k 16 --max-iter 30 \
+  --out "$EXP/results_cbe_llama8b" > cbe_llama8b.log 2>&1 &
+P1=$!
+
+wait $P0; RC0=$?
+wait $P1; RC1=$?
+echo "exit codes: gpt2=$RC0 8b=$RC1"
+grep -h "==\|rho\|random-dir\|extracted" cbe_gpt2.log cbe_llama8b.log | tail -40
+echo "CBE DONE"
