@@ -85,9 +85,9 @@ omnilens_install_runtime_deps() {
     return 0
   fi
 
-  local hookbox_source="${HOOKBOX_INSTALL_SOURCE:-git+https://github.com/anonymous-authors/hookbox.git}"
-  local subset_source="${SUBSET_KL_INSTALL_SOURCE:-git+https://github.com/anonymous-authors/subset-kl.git}"
-  local indexed_source="${INDEXED_LOGITS_INSTALL_SOURCE:-git+https://github.com/anonymous-authors/indexed_logits.git}"
+  local hookbox_source="${HOOKBOX_INSTALL_SOURCE:-git+https://github.com/pettyjohnjn/hookbox.git}"
+  local subset_source="${SUBSET_KL_INSTALL_SOURCE:-git+https://github.com/pettyjohnjn/subset-kl.git}"
+  local indexed_source="${INDEXED_LOGITS_INSTALL_SOURCE:-git+https://github.com/pettyjohnjn/indexed_logits.git}"
 
   pip install accelerate --quiet 2>/dev/null || true
   pip install "${hookbox_source}" --quiet 2>/dev/null || true

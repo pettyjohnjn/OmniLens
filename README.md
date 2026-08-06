@@ -1,7 +1,14 @@
 # OmniLens — code and experiment artifacts
 
-Anonymized supplementary code for the paper *OmniLens: dense trained-lens
-coverage for large language models*.
+Code and experiment artifacts for the paper *OmniLens: dense trained-lens
+coverage for large language models* (Pettyjohn, 2026).
+
+Companion repositories: [hookbox](https://github.com/pettyjohnjn/hookbox)
+(hookpoint instrumentation), [subset-kl](https://github.com/pettyjohnjn/subset-kl)
+(objectives and estimator), and
+[indexed_logits](https://github.com/pettyjohnjn/indexed_logits) (fused CUDA
+kernel). All three are vendored under `packages/` so this repository is
+self-contained.
 
 A **lens** decodes an intermediate activation into a distribution over the
 model's vocabulary. OmniLens makes it affordable to train lenses *densely* —
@@ -64,7 +71,7 @@ cd paper_experiments/plots
 `paper_experiments/README.md` maps each figure in the paper to the plot script
 and experiment directory that produce it.
 
-## Notes for reviewers
+## Notes
 
 **Naming.** `--subset_kl_mode is` selects the head+IS estimator ("Top-k+IS" in
 the paper): the KL is evaluated exactly on the top-k head and estimated on the

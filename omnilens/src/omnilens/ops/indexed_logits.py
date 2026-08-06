@@ -38,7 +38,7 @@ except ImportError:
     logger.warning(
         "indexed_logits CUDA extension not available. "
         "Falling back to standard implementation. "
-        "Install with: pip install git+https://github.com/anonymous-authors/indexed_logits.git"
+        "Install with: pip install git+https://github.com/pettyjohnjn/indexed_logits.git"
     )
 
 

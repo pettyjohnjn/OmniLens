@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-  { name = "Anonymous Authors" },
+  { name = "Jordan Pettyjohn", email = "pettyjohnjn@gmail.com" },
 ]
 keywords = [
     "pytorch",
@@ -49,10 +49,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anonymous-authors/subset-kl"
-Documentation = "https://github.com/anonymous-authors/subset-kl#readme"
-Repository = "https://github.com/anonymous-authors/subset-kl"
-Issues = "https://github.com/anonymous-authors/subset-kl/issues"
+Homepage = "https://github.com/pettyjohnjn/subset-kl"
+Documentation = "https://github.com/pettyjohnjn/subset-kl#readme"
+Repository = "https://github.com/pettyjohnjn/subset-kl"
+Issues = "https://github.com/pettyjohnjn/subset-kl/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

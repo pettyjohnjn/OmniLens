@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-  { name = "Anonymous Authors" },
+  { name = "Jordan Pettyjohn", email = "pettyjohnjn@gmail.com" },
 ]
 keywords = [
     "interpretability",
@@ -44,6 +44,11 @@ dev = [
 all = [
     "omnilens[cuda,dev]",
 ]
+
+[project.urls]
+Homepage = "https://github.com/pettyjohnjn/OmniLens"
+Repository = "https://github.com/pettyjohnjn/OmniLens"
+Issues = "https://github.com/pettyjohnjn/OmniLens/issues"
 
 [project.scripts]
 omnilens = "omnilens.cli:main"

@@ -21,7 +21,7 @@ pip install hookbox
 Or from source:
 
 ```bash
-pip install git+https://github.com/anonymous-authors/hookbox.git
+pip install git+https://github.com/pettyjohnjn/hookbox.git
 ```
 
 ## Quick Start
@@ -330,7 +330,7 @@ from hookbox import (
 Contributions are welcome.
 
 ```bash
-git clone https://github.com/anonymous-authors/hookbox.git
+git clone https://github.com/pettyjohnjn/hookbox.git
 cd hookbox
 
 pip install -e ".[dev]"

@@ -8,9 +8,9 @@ chunk-by-chunk, so only the original low-precision logits and the [N, 1]
 result survive the forward pass.
 
 Paper mapping: this is the exact log-partition computation described in
-Sec. 4.2 ('projecting vocabulary chunks and immediately accumulating
-their log-sum-exp'), which keeps the Top-k+IS estimator's student
-normalization exact (Theorem 1 applies to the implemented objective).
+Sec. 4.2 ('streaming the log-sum-exp reduction over vocabulary chunks in
+fp32'), which keeps the Top-k+IS estimator's student normalization exact
+(Theorem 1 applies to the implemented objective).
 """
 from __future__ import annotations
 

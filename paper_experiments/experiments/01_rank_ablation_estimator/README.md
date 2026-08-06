@@ -99,7 +99,7 @@ only, not copied*:
   no longer exists). The translated tuned-lens-format baseline is at
   `eval_harness/my_lenses/gpt2_preemptable_sweep_1000/tuned_kl_baseline__lens_step_{250,500,750,1000}/`.
 - **subset-kl** and **hookbox** packages on `PYTHONPATH` (training bootstraps them
-  via `pip install git+https://github.com/anonymous-authors/{subset-kl,hookbox}.git` in
+  via `pip install git+https://github.com/pettyjohnjn/{subset-kl,hookbox}.git` in
   `jobs/lib/common.sh`; eval uses `/path/to/project/packages/subset-kl/src`).
 - **The Pile** eval split via the HF cache
   (`HF_HOME=/path/to/hf_cache`).

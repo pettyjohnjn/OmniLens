@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [
-  { name = "anonymous" },
+  { name = "Jordan Pettyjohn", email = "pettyjohnjn@gmail.com" },
 ]
 keywords = [
     "pytorch",
@@ -57,10 +57,10 @@ transformers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anonymous-authors/hookbox"
-Documentation = "https://github.com/anonymous-authors/hookbox#readme"
-Repository = "https://github.com/anonymous-authors/hookbox"
-Issues = "https://github.com/anonymous-authors/hookbox/issues"
+Homepage = "https://github.com/pettyjohnjn/hookbox"
+Documentation = "https://github.com/pettyjohnjn/hookbox#readme"
+Repository = "https://github.com/pettyjohnjn/hookbox"
+Issues = "https://github.com/pettyjohnjn/hookbox/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
