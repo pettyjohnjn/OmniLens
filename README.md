@@ -107,3 +107,14 @@ memory-injection case study runs on exactly the original prompts. See `LICENSE`.
 ## License
 
 MIT — see `LICENSE`, which also records the third-party components above.
+
+## Citation
+If you find this code useful, consider citing our work:
+```
+@article{pettyjohn2026interpreting,
+  title={Interpreting Language Model Hidden States at Scale},
+  author={Pettyjohn, Jordan and Sakarvadia, Mansi and Hudson, Nathaniel and McKenzie, Daniel and Chard, Kyle and Foster, Ian},
+  journal={arXiv preprint arXiv:2608.10260},
+  year={2026}
+}
+```
